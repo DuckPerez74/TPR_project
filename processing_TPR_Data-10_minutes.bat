@@ -1,0 +1,72 @@
+@echo off
+echo ========================================================
+echo INICIANDO PROCESSAMENTO DE 3 MESES DE DADOS (L1 - 10m)
+echo De: 2025-08-06
+echo Ate: 2025-11-06
+echo ========================================================
+
+REM --- MES 1 (Agosto) ---
+
+echo.
+echo [1/13] A processar semana de 06-Ago a 13-Ago...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-08-06T00:00:00" --end-date "2025-08-13T00:00:00"
+
+echo.
+echo [2/13] A processar semana de 13-Ago a 20-Ago...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-08-13T00:00:00" --end-date "2025-08-20T00:00:00"
+
+echo.
+echo [3/13] A processar semana de 20-Ago a 27-Ago...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-08-20T00:00:00" --end-date "2025-08-27T00:00:00"
+
+echo.
+echo [4/13] A processar semana de 27-Ago a 03-Set...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-08-27T00:00:00" --end-date "2025-09-03T00:00:00"
+
+
+REM --- MES 2 (Setembro) ---
+
+echo.
+echo [5/13] A processar semana de 03-Set a 10-Set...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-09-03T00:00:00" --end-date "2025-09-10T00:00:00"
+
+echo.
+echo [6/13] A processar semana de 10-Set a 17-Set...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-09-10T00:00:00" --end-date "2025-09-17T00:00:00"
+
+echo.
+echo [7/13] A processar semana de 17-Set a 24-Set...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-09-17T00:00:00" --end-date "2025-09-24T00:00:00"
+
+echo.
+echo [8/13] A processar semana de 24-Set a 01-Out...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-09-24T00:00:00" --end-date "2025-10-01T00:00:00"
+
+
+REM --- MES 3 (Outubro ate inicio Nov) ---
+
+echo.
+echo [9/13] A processar semana de 01-Out a 08-Out...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-10-01T00:00:00" --end-date "2025-10-08T00:00:00"
+
+echo.
+echo [10/13] A processar semana de 08-Out a 15-Out...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-10-08T00:00:00" --end-date "2025-10-15T00:00:00"
+
+echo.
+echo [11/13] A processar semana de 15-Out a 22-Out...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-10-15T00:00:00" --end-date "2025-10-22T00:00:00"
+
+echo.
+echo [12/13] A processar semana de 22-Out a 29-Out...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-10-22T00:00:00" --end-date "2025-10-29T00:00:00"
+
+echo.
+echo [13/13] A processar semana de 29-Out a 06-Nov...
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-10-29T00:00:00" --end-date "2025-11-06T00:00:00"
+
+echo.
+echo ========================================================
+echo PROCESSAMENTO CONCLUIDO COM SUCESSO!
+echo ========================================================
+pause

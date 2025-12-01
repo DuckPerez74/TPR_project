@@ -1,0 +1,19 @@
+@echo off
+echo ========================================================
+echo INICIANDO PROCESSAMENTO DE 3 MESES DE DADOS (L1 - 60m)
+echo De: 2025-08-06
+echo Ate: 2025-11-06
+echo ========================================================
+
+REM --- MES 3 (Outubro ate inicio Nov) ---
+
+echo.
+echo [13/13] A processar semana de 01-Nov a 06-Nov... (Atualizado 7)
+echo [14/13] Ver se no intervalo 11-09-25 até 30-10-25 esta a funcionar, senão fazer este timestamp
+python .\extracao-metricas-tpr.py --minutes 60 --start-date "2025-09-11T12:00:00" --end-date "2025-10-30T23:00:00"
+
+echo.
+echo ========================================================
+echo PROCESSAMENTO CONCLUIDO COM SUCESSO!
+echo ========================================================
+pause
