@@ -236,6 +236,11 @@ def load_metrics_to_wazuh(es_client, company_id, timestamp, metrics, target_inde
             clean_metrics[key] = value # Se for string/outro, mantém
     # -------------------------------
 
+    # O ID vai ser algo como: "436_2025-09-01T08:00:00"
+    # Assim, se correres de novo, o ID é igual e ele atualiza em vez de duplicar.
+    doc_id = f"{company_id}_{timestamp}"
+    # -------------------------------
+
     document = {
         "@timestamp": timestamp,
         "company_id": company_id,
@@ -244,7 +249,7 @@ def load_metrics_to_wazuh(es_client, company_id, timestamp, metrics, target_inde
     }
     
     try:
-        es_client.index(index=target_index, body=document)
+        es_client.index(index=target_index, body=document, id=doc_id)
         print(f"Métricas para a empresa '{company_id}' enviadas para o índice '{target_index}'.")
     except Exception as e:
         #Debug...
@@ -252,8 +257,16 @@ def load_metrics_to_wazuh(es_client, company_id, timestamp, metrics, target_inde
         print(f"Dados que falharam: {clean_metrics}")
 
 
-def main(time_window_minutes, start_date_str, end_date_str):
-    print(f"--- A iniciar processo para janelas de {time_window_minutes} minutos ---")
+def main(analysis_window_minutes, start_date_str, end_date_str):
+    """
+    analysis_window_minutes: O tamanho da janela que queres CALCULAR (ex: 10 min)
+    """
+    print(f"--- A iniciar processo. Janela de Análise: {analysis_window_minutes} min ---")
+    
+    # 1. Configuração da Janela de FETCH (busca)
+    # A ideia é buscar sempre blocos de 60 minutos (1 hora) para reduzir as queries.
+    # Se a janela de análise for maior que 60 (ex: 120 min), usamos a própria janela de análise para buscar.
+    FETCH_WINDOW_MINUTES = max(60, analysis_window_minutes)
     
     try:
         client = OpenSearch(
@@ -272,56 +285,91 @@ def main(time_window_minutes, start_date_str, end_date_str):
     start_date = datetime.fromisoformat(start_date_str).replace(tzinfo=timezone.utc)
     end_date = datetime.fromisoformat(end_date_str).replace(tzinfo=timezone.utc)
     print(f"Período de análise definido de {start_date} até {end_date} (em UTC).")
+    print(f"Estratégia: Buscar dados a cada {FETCH_WINDOW_MINUTES} min e fatiar a cada {analysis_window_minutes} min.")
 
-    current_time = start_date
-    while current_time < end_date:
-        chunk_start_time = current_time
-        chunk_end_time = current_time + timedelta(minutes=time_window_minutes)
-        if chunk_end_time > end_date: chunk_end_time = end_date
+    # --- LOOP EXTERNO: Controla o FETCH (Busca de dados grossa) ---
+    current_fetch_time = start_date
+    while current_fetch_time < end_date:
+        fetch_end_time = current_fetch_time + timedelta(minutes=FETCH_WINDOW_MINUTES)
+        if fetch_end_time > end_date: fetch_end_time = end_date
         
-        raw_logs = fetch_data_from_wazuh(client, chunk_start_time, chunk_end_time)
+        # Busca 1 hora de dados (ou o valor de FETCH_WINDOW_MINUTES)
+        raw_logs = fetch_data_from_wazuh(client, current_fetch_time, fetch_end_time)
         
+        # Se houver dados, convertemos para DataFrame UMA VEZ
+        df_large_chunk = pd.DataFrame()
         if raw_logs:
-            df = pd.json_normalize(raw_logs, sep='.')
+            df_large_chunk = pd.json_normalize(raw_logs, sep='.')
             
-            if COMPANY_ID_FIELD in df.columns:
-                df_filtered = df.dropna(subset=[COMPANY_ID_FIELD])
-                print(f"Dos {len(df)} logs, {len(df_filtered)} contêm o campo '{COMPANY_ID_FIELD}' e serão processados.")
+            # Normalização de timestamps para garantir que o Pandas consegue filtrar
+            if 'timestamp' in df_large_chunk.columns:
+                df_large_chunk['@timestamp'] = pd.to_datetime(df_large_chunk['timestamp'])
+            elif '@timestamp' in df_large_chunk.columns:
+                df_large_chunk['@timestamp'] = pd.to_datetime(df_large_chunk['@timestamp'])
+            
+            # Garante que o timestamp tem timezone UTC para bater certo com as tuas datas
+            if not df_large_chunk.empty and df_large_chunk['@timestamp'].dt.tz is None:
+                 df_large_chunk['@timestamp'] = df_large_chunk['@timestamp'].dt.tz_localize('UTC')
 
-                if not df_filtered.empty:
-                    # Converte o timestamp antes de agrupar
-                    if 'timestamp' in df_filtered.columns:
-                        df_filtered['@timestamp'] = pd.to_datetime(df_filtered['timestamp'])
-                    elif '@timestamp' in df.columns:
-                        df['@timestamp'] = pd.to_datetime(df['@timestamp'])
-
-                    grouped_by_company = df_filtered.groupby(COMPANY_ID_FIELD)
-                    print(f"Dados agrupados. Encontradas {len(grouped_by_company)} entidades únicas.")
-                    
-                    target_index = f"metrics-l1-{time_window_minutes}m"
-                    for company_id, company_df in grouped_by_company:
-
-                        # Se o ID for um traço ou vazio, salta para o próximo e ignora este
-                        if str(company_id).strip() in ["-", ""]:
-                            continue
-                        print(f"Processando entidade: {company_id}...")
-                        calculated_metrics = calculate_l1_metrics(company_df, time_window_minutes)
-                        calculated_metrics['time_window_minutes'] = time_window_minutes
-                        load_metrics_to_wazuh(client, company_id, chunk_end_time, calculated_metrics, target_index)
-            else:
-                print(f"AVISO: Nenhum dos {len(df)} logs neste período continha o campo '{COMPANY_ID_FIELD}'.")
+        # --- LOOP INTERNO: Controla o SLICING (Fatiamento para análise) ---
+        # Agora vamos percorrer a "Fetch Window" em pedacinhos de "Analysis Window"
+        current_slice_time = current_fetch_time
         
-        current_time += timedelta(minutes=time_window_minutes)
+        while current_slice_time < fetch_end_time:
+            slice_end_time = current_slice_time + timedelta(minutes=analysis_window_minutes)
+            
+            # Se por acaso o slice passar do tempo total do script, cortamos
+            if slice_end_time > end_date: slice_end_time = end_date
+
+            # Se não houver logs no bloco grande, não há nada para processar neste slice
+            if df_large_chunk.empty:
+                print(f"Sem dados para o intervalo {current_slice_time} - {slice_end_time}")
+            else:
+                # AQUI ESTÁ A MAGIA: Filtragem em Memória (Pandas) em vez de query ao Wazuh
+                # Filtramos o DataFrame grande para pegar apenas os registos deste intervalo pequeno
+                mask = (df_large_chunk['@timestamp'] >= current_slice_time) & (df_large_chunk['@timestamp'] < slice_end_time)
+                df_slice = df_large_chunk.loc[mask].copy()
+
+                if not df_slice.empty and COMPANY_ID_FIELD in df_slice.columns:
+                    df_filtered = df_slice.dropna(subset=[COMPANY_ID_FIELD])
+                    
+                    if not df_filtered.empty:
+                        print(f"Processando slice {current_slice_time} a {slice_end_time}: {len(df_filtered)} logs encontrados.")
+                        grouped_by_company = df_filtered.groupby(COMPANY_ID_FIELD)
+                        
+                        target_index = f"metrics-l1-{analysis_window_minutes}m"
+                        
+                        for company_id, company_df in grouped_by_company:
+                            if str(company_id).strip() in ["-", ""]:
+                                continue
+                            
+                            # Calcula métricas para este pedaço pequeno
+                            calculated_metrics = calculate_l1_metrics(company_df, analysis_window_minutes)
+                            calculated_metrics['time_window_minutes'] = analysis_window_minutes
+                            
+                            # Envia para o Wazuh
+                            load_metrics_to_wazuh(client, company_id, slice_end_time, calculated_metrics, target_index)
+                    else:
+                        print(f"Slice {current_slice_time}: Logs existem mas sem '{COMPANY_ID_FIELD}'.")
+                else:
+                    # Opcional: print(f"Nenhum log encontrado especificamente entre {current_slice_time} e {slice_end_time}")
+                    pass
+
+            # Avança o loop interno
+            current_slice_time += timedelta(minutes=analysis_window_minutes)
+
+        # Avança o loop externo
+        current_fetch_time = fetch_end_time
 
     print(f"\n--- Processo histórico concluído! ---")
 
 # --- Ponto de Entrada do Script ---
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Processa logs históricos do Wazuh e calcula métricas L1.")
+    parser = argparse.ArgumentParser(description="Processa logs históricos do Wazuh com otimização de fetch.")
     
     parser.add_argument(
         '--minutes', type=int, required=True,
-        help='A janela de tempo em minutos para cada fatia de análise (ex: 60).'
+        help='A janela de tempo em minutos para o CÁLCULO das métricas (ex: 10).'
     )
     parser.add_argument(
         '--start-date', type=str, required=True,
@@ -335,7 +383,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     main(
-        time_window_minutes=args.minutes,
+        analysis_window_minutes=args.minutes,
         start_date_str=args.start_date,
         end_date_str=args.end_date
     )

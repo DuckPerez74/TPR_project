@@ -236,6 +236,11 @@ def load_metrics_to_wazuh(es_client, company_id, timestamp, metrics, target_inde
             clean_metrics[key] = value # Se for string/outro, mantém
     # -------------------------------
 
+    # O ID vai ser algo como: "436_2025-09-01T08:00:00"
+    # Assim, se correres de novo, o ID é igual e ele atualiza em vez de duplicar.
+    doc_id = f"{company_id}_{timestamp}"
+    # -------------------------------
+
     document = {
         "@timestamp": timestamp,
         "company_id": company_id,
@@ -244,7 +249,7 @@ def load_metrics_to_wazuh(es_client, company_id, timestamp, metrics, target_inde
     }
     
     try:
-        es_client.index(index=target_index, body=document)
+        es_client.index(index=target_index, body=document, id=doc_id)
         print(f"Métricas para a empresa '{company_id}' enviadas para o índice '{target_index}'.")
     except Exception as e:
         #Debug...

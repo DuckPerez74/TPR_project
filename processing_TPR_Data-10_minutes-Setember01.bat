@@ -9,12 +9,8 @@ echo ========================================================
 REM --- MES 2 (Setembro) ---
 
 echo.
-echo [5/13] A processar semana de 03-Set a 10-Set...(MODIFICADO PARA FAZER A PRIMEIRA QUINZENA DE SETEMBRO)
-python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-09-03T00:00:00" --end-date "2025-09-10T00:00:00"
-
-echo.
-echo [6/13] A processar semana de 10-Set a 17-Set...
-python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-09-10T00:00:00" --end-date "2025-09-17T00:00:00"
+echo [6/13] A processar semana de 15-Set a 17-Set...(ATUALIZADO V2.0)
+python .\extracao-metricas-tpr-BackUP_Version.py --minutes 10 --start-date "2025-09-15T15:00:00" --end-date "2025-09-17T00:00:00"
 
 echo.
 echo [7/13] A processar semana de 17-Set a 24-Set...
