@@ -352,13 +352,41 @@ def plot_clusters_pca(df_features, df_clusters, scaler, kmeans, title, filename=
 
     clusters = merged["cluster"].values
 
-    plt.figure(figsize=(8, 6))
+    plt.figure(figsize=(10, 8))
+    
+    # Criar background com regiões de cada cluster
+    # Criar uma malha de pontos para classificar
+    x_min, x_max = X_pca[:, 0].min() - 1, X_pca[:, 0].max() + 1
+    y_min, y_max = X_pca[:, 1].min() - 1, X_pca[:, 1].max() + 1
+    
+    # Resolução da malha (ajustar se necessário para mais/menos detalhe)
+    h = 0.1
+    xx, yy = np.meshgrid(
+        np.arange(x_min, x_max, h),
+        np.arange(y_min, y_max, h)
+    )
+    
+    # Projetar a malha de volta ao espaço original para classificação
+    # Precisamos fazer o inverso da transformação PCA
+    mesh_points_pca = np.c_[xx.ravel(), yy.ravel()]
+    mesh_points_scaled = pca.inverse_transform(mesh_points_pca)
+    
+    # Classificar cada ponto da malha usando o modelo K-Means
+    Z = kmeans.predict(mesh_points_scaled)
+    Z = Z.reshape(xx.shape)
+    
+    # Desenhar o contorno preenchido (background)
+    plt.contourf(xx, yy, Z, levels=np.arange(-0.5, kmeans.n_clusters + 0.5, 1),
+                 alpha=0.3, cmap='viridis')
+    
     scatter = plt.scatter(
         X_pca[:, 0],
         X_pca[:, 1],
         c=clusters,
         alpha=0.75,
         s=40,
+        edgecolors='black',
+        linewidth=0.5,
     )
 
     # Centróides: no espaço escalado -> projetar para PCA
