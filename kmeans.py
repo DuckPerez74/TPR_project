@@ -181,7 +181,6 @@ def train_kmeans(df_features, n_clusters):
     Retorna (scaler, kmeans, df_resultados, silhouette_train).
     """
     feature_cols = [c for c in df_features.columns if c != "company_id"]
-
     X = df_features[feature_cols].values
 
     # Normalizar de forma robusta (menos sensível a outliers)
@@ -269,7 +268,11 @@ def cluster_distance_diagnostics(df_features, df_clusters, scaler, kmeans, top_n
         print(f"[DIST] {label}: nenhum dado para diagnóstico.")
         return pd.DataFrame()
 
-    feature_cols = [c for c in merged.columns if c not in ("company_id", "cluster")]
+    sub_col = None
+    if sub_target_cluster is not None:
+        sub_col = f"sub_{sub_target_cluster}"
+
+    feature_cols = [c for c in df_features.columns if c != "company_id"]
 
     X = merged[feature_cols].values
     X_scaled = scaler.transform(X)
@@ -317,11 +320,95 @@ def cluster_distance_diagnostics(df_features, df_clusters, scaler, kmeans, top_n
     return diag_df
 
 
+# ==========================
+# 6.b Subcluster dentro de um cluster existente
+# ==========================
+def train_subcluster_inside_cluster(df_features, df_clusters, scaler, target_cluster=0, sub_k=2):
+    """
+    Treina um K-Means apenas nos pontos do cluster `target_cluster`,
+    mantendo o clustering principal inalterado. Retorna (kmeans_sub, df_clusters_out).
+    """
+    merged = pd.merge(
+        df_features,
+        df_clusters[["company_id", "cluster"]],
+        on="company_id",
+        how="inner",
+    )
+
+    subset = merged[merged["cluster"] == target_cluster]
+    if subset.empty:
+        print(f"[SUB] Cluster {target_cluster} está vazio. Não será subdividido.")
+        return None, df_clusters
+
+    if len(subset) < sub_k:
+        print(f"[SUB] Cluster {target_cluster} tem menos empresas ({len(subset)}) do que sub_k={sub_k}. Abort subcluster.")
+        return None, df_clusters
+
+    feature_cols = [c for c in subset.columns if c not in ("company_id", "cluster")]
+    X = subset[feature_cols].values
+    X_scaled = scaler.transform(X)
+
+    kmeans_sub = KMeans(n_clusters=sub_k, random_state=42, n_init=25)
+    sub_labels = kmeans_sub.fit_predict(X_scaled)
+
+    # Mapear de volta por company_id para evitar desalinhamentos de ordem
+    sub_df = pd.DataFrame({"company_id": subset["company_id"].values, "sub_label": sub_labels})
+
+    df_out = df_clusters.copy()
+    sub_col = f"sub_{target_cluster}"
+    df_out[sub_col] = np.nan
+    df_out = df_out.merge(sub_df, on="company_id", how="left")
+    df_out[sub_col] = df_out[sub_col].fillna(df_out.pop("sub_label"))
+
+    print(f"[SUB] Subdivisão do cluster {target_cluster} em {sub_k} subclusters concluída.")
+    print(df_out.loc[df_out["cluster"] == target_cluster, sub_col].value_counts().sort_index())
+
+    return kmeans_sub, df_out
+
+
+def apply_subcluster(df_features, df_clusters, scaler, kmeans_sub, target_cluster=0):
+    """
+    Aplica um modelo de subcluster apenas aos pontos que pertencem ao cluster `target_cluster`.
+    """
+    if kmeans_sub is None:
+        return df_clusters
+
+    # Selecionar apenas empresas do cluster alvo
+    target_ids = df_clusters.loc[df_clusters["cluster"] == target_cluster, "company_id"]
+    if target_ids.empty:
+        print(f"[SUB] Nenhuma empresa com cluster {target_cluster} para subclusterizar no novo período.")
+        df_out = df_clusters.copy()
+        df_out[f"sub_{target_cluster}"] = np.nan
+        return df_out
+
+    merged = pd.merge(
+        df_features,
+        target_ids.to_frame(),
+        on="company_id",
+        how="inner",
+    )
+
+    feature_cols = [c for c in merged.columns if c != "company_id"]
+    X = merged[feature_cols].values
+    X_scaled = scaler.transform(X)
+
+    sub_labels = kmeans_sub.predict(X_scaled)
+    sub_df = pd.DataFrame({"company_id": merged["company_id"].values, "sub_label": sub_labels})
+
+    df_out = df_clusters.copy()
+    sub_col = f"sub_{target_cluster}"
+    df_out[sub_col] = np.nan
+    df_out = df_out.merge(sub_df, on="company_id", how="left")
+    df_out[sub_col] = df_out[sub_col].fillna(df_out.pop("sub_label"))
+
+    return df_out
+
+
 
 # ==========================
 # 7. Gráfico PCA dos clusters (visualização)
 # ==========================
-def plot_clusters_pca(df_features, df_clusters, scaler, kmeans, title, filename=None):
+def plot_clusters_pca(df_features, df_clusters, scaler, kmeans, title, filename=None, sub_target_cluster=None):
     """
     Desenha um gráfico 2D (PCA) dos clusters, com:
       - Pontos coloridos por cluster
@@ -330,9 +417,15 @@ def plot_clusters_pca(df_features, df_clusters, scaler, kmeans, title, filename=
     PCA é usado apenas para visualização (não faz parte do treino).
     """
     # Garantir que os dados estão alinhados por empresa
+    merge_cols = ["company_id", "cluster"]
+    if sub_target_cluster is not None:
+        sub_col = f"sub_{sub_target_cluster}"
+        if sub_col in df_clusters.columns:
+            merge_cols.append(sub_col)
+
     merged = pd.merge(
         df_features,
-        df_clusters[["company_id", "cluster"]],
+        df_clusters[merge_cols],
         on="company_id",
         how="inner",
     )
@@ -341,7 +434,11 @@ def plot_clusters_pca(df_features, df_clusters, scaler, kmeans, title, filename=
         print("[PLOT] Não há empresas para plotar.")
         return
 
-    feature_cols = [c for c in merged.columns if c not in ("company_id", "cluster")]
+    feature_cols = [c for c in df_features.columns if c != "company_id"]
+    expected = getattr(scaler, "n_features_in_", len(feature_cols))
+    if len(feature_cols) != expected:
+        print(f"[PLOT] Aviso: {len(feature_cols)} colunas de features, mas scaler espera {expected}. Ajustando...")
+        feature_cols = feature_cols[:expected]
 
     X = merged[feature_cols].values
     X_scaled = scaler.transform(X)
@@ -389,6 +486,26 @@ def plot_clusters_pca(df_features, df_clusters, scaler, kmeans, title, filename=
         linewidth=0.5,
     )
 
+    # Se existir subclusterização para o cluster alvo, sobrepor com outra paleta
+    if sub_target_cluster is not None:
+        sub_col = f"sub_{sub_target_cluster}"
+        if sub_col in merged.columns:
+            mask_sub = (merged["cluster"] == sub_target_cluster) & merged[sub_col].notna()
+            if mask_sub.any():
+                subs = merged.loc[mask_sub, sub_col].values
+                plt.scatter(
+                    X_pca[mask_sub, 0],
+                    X_pca[mask_sub, 1],
+                    c=subs,
+                    cmap='tab10',
+                    alpha=0.9,
+                    s=55,
+                    marker='o',
+                    edgecolors='white',
+                    linewidth=0.6,
+                    label=f"Subclusters do cluster {sub_target_cluster}",
+                )
+
     # Centróides: no espaço escalado -> projetar para PCA
     centers_scaled = kmeans.cluster_centers_
     centers_pca = pca.transform(centers_scaled)
@@ -425,6 +542,99 @@ def plot_clusters_pca(df_features, df_clusters, scaler, kmeans, title, filename=
 
 
 # ==========================
+# 7.b Gráfico PCA para subcluster de um cluster específico
+# ==========================
+def plot_subcluster_pca(df_features, df_clusters, scaler, kmeans_sub, target_cluster, title, filename=None):
+    """
+    Desenha um gráfico PCA apenas para o cluster `target_cluster`, colorindo pelos subclusters.
+    """
+    sub_col = f"sub_{target_cluster}"
+    if sub_col not in df_clusters.columns:
+        print(f"[PLOT] Coluna {sub_col} não existe, não há subclusters para plotar.")
+        return
+
+    merged = pd.merge(
+        df_features,
+        df_clusters[["company_id", "cluster", sub_col]],
+        on="company_id",
+        how="inner",
+    )
+
+    subset = merged[(merged["cluster"] == target_cluster) & (merged[sub_col].notna())]
+    if subset.empty:
+        print(f"[PLOT] Nenhuma empresa no cluster {target_cluster} com subcluster definido.")
+        return
+
+    feature_cols = [c for c in subset.columns if c not in ("company_id", "cluster", sub_col)]
+
+    X = subset[feature_cols].values
+    X_scaled = scaler.transform(X)
+
+    pca = PCA(n_components=2, random_state=42)
+    X_pca = pca.fit_transform(X_scaled)
+
+    subs = subset[sub_col].values
+
+    plt.figure(figsize=(8, 6))
+
+    # Malha de decisão para os subclusters
+    x_min, x_max = X_pca[:, 0].min() - 1, X_pca[:, 0].max() + 1
+    y_min, y_max = X_pca[:, 1].min() - 1, X_pca[:, 1].max() + 1
+    h = 0.1
+    xx, yy = np.meshgrid(np.arange(x_min, x_max, h), np.arange(y_min, y_max, h))
+
+    mesh_points_pca = np.c_[xx.ravel(), yy.ravel()]
+    mesh_points_scaled = pca.inverse_transform(mesh_points_pca)
+    Z = kmeans_sub.predict(mesh_points_scaled)
+    Z = Z.reshape(xx.shape)
+
+    plt.contourf(xx, yy, Z, levels=np.arange(-0.5, kmeans_sub.n_clusters + 0.5, 1),
+                 alpha=0.25, cmap='tab10')
+
+    scatter = plt.scatter(
+        X_pca[:, 0],
+        X_pca[:, 1],
+        c=subs,
+        cmap='tab10',
+        alpha=0.8,
+        s=50,
+        edgecolors='black',
+        linewidth=0.6,
+    )
+
+    centers_scaled = kmeans_sub.cluster_centers_
+    centers_pca = pca.transform(centers_scaled)
+    plt.scatter(
+        centers_pca[:, 0],
+        centers_pca[:, 1],
+        marker="X",
+        s=200,
+        edgecolor="black",
+        linewidths=2,
+        facecolor="white",
+        label="Centro subcluster",
+    )
+
+    legend1 = plt.legend(*scatter.legend_elements(), title=f"Subcluster {target_cluster}")
+    plt.gca().add_artist(legend1)
+    plt.legend(loc="best")
+
+    plt.title(title)
+    plt.xlabel("PC1")
+    plt.ylabel("PC2")
+    plt.grid(True, alpha=0.3)
+
+    if filename is not None:
+        plt.tight_layout()
+        plt.savefig(filename, bbox_inches="tight")
+        print(f"[PLOT] Gráfico de subcluster guardado em: {filename}")
+        plt.close()
+    else:
+        plt.tight_layout()
+        plt.show()
+
+
+# ==========================
 # 8. main()
 # ==========================
 def main(
@@ -433,6 +643,8 @@ def main(
     test_start_str,
     test_end_str,
     n_clusters,
+    sub_target_cluster=0,
+    sub_k=2,
 ):
     # 1) Converter strings para datetimes com timezone UTC
     train_start = datetime.fromisoformat(train_start_str).replace(tzinfo=timezone.utc)
@@ -476,6 +688,19 @@ def main(
     else:
         print("[TRAIN] Silhouette score (treino) não pôde ser calculado (clusters insuficientes ou degenerados).")
 
+    # 5.b) Subcluster dentro de um cluster específico (opcional)
+    kmeans_sub = None
+    if sub_k and sub_k > 1 and n_clusters >= 1:
+        kmeans_sub, df_train_clusters = train_subcluster_inside_cluster(
+            df_train_feat,
+            df_train_clusters,
+            scaler,
+            target_cluster=sub_target_cluster,
+            sub_k=sub_k,
+        )
+    else:
+        print(f"[SUB] Subcluster desativado (sub_k={sub_k}).")
+
     # 6) Fetch + build teste
     df_test_raw = fetch_metrics(client, test_start, test_end)
     df_test_feat = build_company_feature_table(df_test_raw, feature_names)
@@ -488,8 +713,23 @@ def main(
     print("\n[TEST] A aplicar K-Means aos dados de teste...")
     df_test_clusters = apply_kmeans(df_test_feat, scaler, kmeans)
 
+    # Aplicar subcluster ao cluster 0 no período de teste
+    df_test_clusters = apply_subcluster(
+        df_test_feat,
+        df_test_clusters,
+        scaler,
+        kmeans_sub,
+        target_cluster=sub_target_cluster,
+    )
+
     print("[TEST] Distribuição de empresas por cluster (teste):")
     print(df_test_clusters["cluster"].value_counts().sort_index())
+
+    if kmeans_sub is not None:
+        sub_col = f"sub_{sub_target_cluster}"
+        print(f"[TEST] Subclusters dentro do cluster {sub_target_cluster} (teste):")
+        print(df_test_clusters.loc[df_test_clusters["cluster"] == sub_target_cluster, sub_col]
+              .value_counts().sort_index())
 
     # 8) Silhouette no conjunto de teste
     feature_cols = [c for c in df_test_feat.columns if c != "company_id"]
@@ -531,6 +771,7 @@ def main(
         kmeans,
         title="Clusters K-Means (Treino)",
         filename="kmeans_clusters_treino.png",
+        sub_target_cluster=sub_target_cluster,
     )
 
     print("\n[PLOT] A gerar gráfico 2D (PCA) para os clusters de teste...")
@@ -541,6 +782,7 @@ def main(
         kmeans,
         title="Clusters K-Means (Teste)",
         filename="kmeans_clusters_teste.png",
+        sub_target_cluster=sub_target_cluster,
     )
 
     # Para uso em Jupyter, se quiseres importar main()
@@ -580,6 +822,20 @@ if __name__ == "__main__":
         help="Número de clusters do K-Means (ex: 3 para pequeno/médio/grande).",
     )
 
+    parser.add_argument(
+        "--sub-target-cluster",
+        type=int,
+        default=0,
+        help="Cluster principal que será subdividido (hierárquico).",
+    )
+
+    parser.add_argument(
+        "--sub-k",
+        type=int,
+        default=4,
+        help="Número de subclusters dentro do cluster alvo (se <=1, desativa subcluster).",
+    )
+
     args = parser.parse_args()
 
     main(
@@ -588,4 +844,6 @@ if __name__ == "__main__":
         test_start_str=args.test_start,
         test_end_str=args.test_end,
         n_clusters=args.n_clusters,
+        sub_target_cluster=args.sub_target_cluster,
+        sub_k=args.sub_k,
     )
