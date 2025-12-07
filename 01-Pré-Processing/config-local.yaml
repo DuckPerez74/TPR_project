@@ -1,0 +1,43 @@
+local_logs:
+  path: "/mnt/e/Infraspeak/Out"  
+  filter_value: "/logs/nginx/api.production.access.log" 
+
+target:
+  host: "https://localhost:9200" 
+  user: ""
+  password: ""
+
+indices:
+  target_index: "wazuh-alerts-4.x-{date}"
+
+processing:
+  timestamp_field: "timestamp" 
+  batch_size: 10000
+  num_workers: 32
+  exclude_fields: 
+    - full_log
+    - agent.id
+    - agent.ip
+    - agent.name
+    - data.amazon_trace_id
+    - decoder.name
+    - decoder.parent
+    - rule.groups
+    - rule.firedtimes
+    - rule.id
+    - rule.mail
+    - GeoLocation.location
+    - agent.labels.service
+    - data.api_version
+    - data.id
+    - rule.description
+    - rule.level
+  anonymize_fields:
+    data.user_ip: "ip"
+    data.srcip: "ip"
+    data.alb_ip: "ip"
+    data.client_ip: "ip"
+    data.entity: "number"
+    data.operator_user: "string"
+
+  salt: ""
