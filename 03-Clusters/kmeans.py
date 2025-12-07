@@ -10,7 +10,9 @@ usando métricas L1 já calculadas no Wazuh (índice metrics-l1-60m*).
 """
 
 import argparse
+import os
 from datetime import datetime, timezone
+from typing import Iterable, List, Optional, Sequence
 import warnings
 
 import numpy as np
@@ -26,21 +28,46 @@ import matplotlib.pyplot as plt
 warnings.filterwarnings("ignore", "Unverified HTTPS request")
 
 # --- CONFIG WAZUH / OPENSEARCH ---
-ES_HOSTS = ["https://100.125.228.80:9200"]
-ES_USER = "admin"
-ES_PASSWORD = "SecretPassword" 
+ES_HOSTS = os.getenv("ES_HOSTS", "https://100.125.228.80:9200").split(",")
+ES_USER = os.getenv("ES_USER", "admin")
+ES_PASSWORD = os.getenv("ES_PASSWORD", "SecretPassword")
 
 METRICS_INDEX_PATTERN = "metrics-l1-60m*"
+DEFAULT_FEATURES = [
+    "total_requests",
+    "mean_requests_per_minute",
+    #"unique_source_ips",
+    "unique_routes",
+    "unique_api_modules",
+    #"mean_requests_per_ip",
+    #"mean_response_time",
+]
+
+
+def feature_columns(df: pd.DataFrame) -> List[str]:
+    """Devolve todas as colunas de feature (exclui `company_id`)."""
+    return [c for c in df.columns if c != "company_id"]
+
+
+def parse_iso_utc(value: str) -> datetime:
+    """Parse ISO-8601 string forcing timezone UTC."""
+    return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
 
 
 # ==========================
 # 1. Conexão ao OpenSearch
 # ==========================
-def get_es_client():
+def get_es_client(hosts: Optional[Sequence[str]] = None,
+                 user: Optional[str] = None,
+                 password: Optional[str] = None) -> OpenSearch:
     """Cria e devolve um cliente OpenSearch autenticado."""
+    hosts = list(hosts) if hosts is not None else ES_HOSTS
+    user = user if user is not None else ES_USER
+    password = password if password is not None else ES_PASSWORD
+
     client = OpenSearch(
-        hosts=ES_HOSTS,
-        http_auth=(ES_USER, ES_PASSWORD),
+        hosts=hosts,
+        http_auth=(user, password),
         verify_certs=False,
         ssl_assert_hostname=False,
         ssl_show_warn=False,
@@ -54,7 +81,8 @@ def get_es_client():
 # ==========================
 # 2. Fetch de métricas L1
 # ==========================
-def fetch_metrics(client, start_dt, end_dt, index_pattern=METRICS_INDEX_PATTERN):
+def fetch_metrics(client: OpenSearch, start_dt: datetime, end_dt: datetime,
+                  index_pattern: str = METRICS_INDEX_PATTERN) -> pd.DataFrame:
     """
     Vai buscar TODOS os documentos de métricas L1 entre start_dt e end_dt.
 
@@ -130,7 +158,7 @@ def fetch_metrics(client, start_dt, end_dt, index_pattern=METRICS_INDEX_PATTERN)
 # ==========================
 # 3. Construção de features
 # ==========================
-def build_company_feature_table(df, feature_names):
+def build_company_feature_table(df: pd.DataFrame, feature_names: Iterable[str]) -> pd.DataFrame:
     """
     A partir de um DF de docs de métricas, constrói uma tabela
     com UMA LINHA por company_id, agregando as métricas por média.
@@ -175,12 +203,12 @@ def build_company_feature_table(df, feature_names):
 # ==========================
 # 4. Treino do K-Means
 # ==========================
-def train_kmeans(df_features, n_clusters):
+def train_kmeans(df_features: pd.DataFrame, n_clusters: int):
     """
     Treina um K-Means em df_features (sem a coluna company_id).
     Retorna (scaler, kmeans, df_resultados, silhouette_train).
     """
-    feature_cols = [c for c in df_features.columns if c != "company_id"]
+    feature_cols = feature_columns(df_features)
     X = df_features[feature_cols].values
 
     # Normalizar de forma robusta (menos sensível a outliers)
@@ -194,9 +222,7 @@ def train_kmeans(df_features, n_clusters):
     )
     labels = kmeans.fit_predict(X_scaled)
 
-    silhouette_train = None
-    if n_clusters > 1 and len(np.unique(labels)) > 1:
-        silhouette_train = silhouette_score(X_scaled, labels)
+    silhouette_train = compute_silhouette(X_scaled, labels)
 
     df_out = df_features.copy()
     df_out["cluster"] = labels
@@ -207,9 +233,9 @@ def train_kmeans(df_features, n_clusters):
 # ==========================
 # 5. Aplicar K-Means a outro período
 # ==========================
-def apply_kmeans(df_features, scaler, kmeans):
+def apply_kmeans(df_features: pd.DataFrame, scaler: RobustScaler, kmeans: KMeans) -> pd.DataFrame:
     """Aplica o scaler + modelo a um novo DF de features por empresa."""
-    feature_cols = [c for c in df_features.columns if c != "company_id"]
+    feature_cols = feature_columns(df_features)
     X = df_features[feature_cols].values
     X_scaled = scaler.transform(X)
     labels = kmeans.predict(X_scaled)
@@ -222,7 +248,7 @@ def apply_kmeans(df_features, scaler, kmeans):
 # ==========================
 # 6. Métrica de estabilidade
 # ==========================
-def compute_cluster_stability(train_clusters, test_clusters):
+def compute_cluster_stability(train_clusters: pd.DataFrame, test_clusters: pd.DataFrame):
     """
     Calcula a percentagem de empresas que mantêm o mesmo cluster
     entre treino e teste (apenas para empresas que existem nos dois).
@@ -245,7 +271,15 @@ def compute_cluster_stability(train_clusters, test_clusters):
     return stability
 
 
-def cluster_distance_diagnostics(df_features, df_clusters, scaler, kmeans, top_n=20, label="Treino"):
+def cluster_distance_diagnostics(
+    df_features: pd.DataFrame,
+    df_clusters: pd.DataFrame,
+    scaler: RobustScaler,
+    kmeans: KMeans,
+    top_n: int = 20,
+    label: str = "Treino",
+    sub_target_cluster: Optional[int] = None,
+):
     """
     Calcula, para cada empresa:
       - distância ao centróide do cluster atribuído
@@ -268,11 +302,7 @@ def cluster_distance_diagnostics(df_features, df_clusters, scaler, kmeans, top_n
         print(f"[DIST] {label}: nenhum dado para diagnóstico.")
         return pd.DataFrame()
 
-    sub_col = None
-    if sub_target_cluster is not None:
-        sub_col = f"sub_{sub_target_cluster}"
-
-    feature_cols = [c for c in df_features.columns if c != "company_id"]
+    feature_cols = feature_columns(df_features)
 
     X = merged[feature_cols].values
     X_scaled = scaler.transform(X)
@@ -323,7 +353,13 @@ def cluster_distance_diagnostics(df_features, df_clusters, scaler, kmeans, top_n
 # ==========================
 # 6.b Subcluster dentro de um cluster existente
 # ==========================
-def train_subcluster_inside_cluster(df_features, df_clusters, scaler, target_cluster=0, sub_k=2):
+def train_subcluster_inside_cluster(
+    df_features: pd.DataFrame,
+    df_clusters: pd.DataFrame,
+    scaler: RobustScaler,
+    target_cluster: int = 0,
+    sub_k: int = 2,
+):
     """
     Treina um K-Means apenas nos pontos do cluster `target_cluster`,
     mantendo o clustering principal inalterado. Retorna (kmeans_sub, df_clusters_out).
@@ -366,7 +402,13 @@ def train_subcluster_inside_cluster(df_features, df_clusters, scaler, target_clu
     return kmeans_sub, df_out
 
 
-def apply_subcluster(df_features, df_clusters, scaler, kmeans_sub, target_cluster=0):
+def apply_subcluster(
+    df_features: pd.DataFrame,
+    df_clusters: pd.DataFrame,
+    scaler: RobustScaler,
+    kmeans_sub: Optional[KMeans],
+    target_cluster: int = 0,
+):
     """
     Aplica um modelo de subcluster apenas aos pontos que pertencem ao cluster `target_cluster`.
     """
@@ -388,7 +430,7 @@ def apply_subcluster(df_features, df_clusters, scaler, kmeans_sub, target_cluste
         how="inner",
     )
 
-    feature_cols = [c for c in merged.columns if c != "company_id"]
+    feature_cols = feature_columns(merged)
     X = merged[feature_cols].values
     X_scaled = scaler.transform(X)
 
@@ -637,35 +679,38 @@ def plot_subcluster_pca(df_features, df_clusters, scaler, kmeans_sub, target_clu
 # ==========================
 # 8. main()
 # ==========================
+def compute_silhouette(X_scaled: np.ndarray, labels: np.ndarray) -> Optional[float]:
+    """Silhouette seguro: devolve None se não for calculável."""
+    if len(np.unique(labels)) <= 1:
+        return None
+    return silhouette_score(X_scaled, labels)
+
+
 def main(
-    train_start_str,
-    train_end_str,
-    test_start_str,
-    test_end_str,
-    n_clusters,
-    sub_target_cluster=0,
-    sub_k=2,
+    train_start_str: str,
+    train_end_str: str,
+    test_start_str: str,
+    test_end_str: str,
+    n_clusters: int,
+    sub_target_cluster: int = 0,
+    sub_k: int = 2,
+    feature_names: Optional[List[str]] = None,
+    es_hosts: Optional[Sequence[str]] = None,
+    es_user: Optional[str] = None,
+    es_password: Optional[str] = None,
 ):
     # 1) Converter strings para datetimes com timezone UTC
-    train_start = datetime.fromisoformat(train_start_str).replace(tzinfo=timezone.utc)
-    train_end = datetime.fromisoformat(train_end_str).replace(tzinfo=timezone.utc)
-    test_start = datetime.fromisoformat(test_start_str).replace(tzinfo=timezone.utc)
-    test_end = datetime.fromisoformat(test_end_str).replace(tzinfo=timezone.utc)
+    train_start = parse_iso_utc(train_start_str)
+    train_end = parse_iso_utc(train_end_str)
+    test_start = parse_iso_utc(test_start_str)
+    test_end = parse_iso_utc(test_end_str)
 
     # 2) Features escolhidas (aqui está a versão que te deu score alto)
-    feature_names = [
-        "total_requests",
-        "mean_requests_per_minute",
-        "unique_source_ips",
-        "unique_routes",
-        "unique_api_modules",
-        "mean_requests_per_ip",
-        "mean_response_time"
-    ]
+    feature_names = feature_names or DEFAULT_FEATURES
 
     # 3) Conectar ao ES
     print("[INFO] A conectar ao Wazuh Indexer...")
-    client = get_es_client()
+    client = get_es_client(hosts=es_hosts, user=es_user, password=es_password)
     print("[INFO] Conectado com sucesso.")
 
     # 4) Fetch + build treino
@@ -732,14 +777,12 @@ def main(
               .value_counts().sort_index())
 
     # 8) Silhouette no conjunto de teste
-    feature_cols = [c for c in df_test_feat.columns if c != "company_id"]
+    feature_cols = feature_columns(df_test_feat)
     X_test = df_test_feat[feature_cols].values
     X_test_scaled = scaler.transform(X_test)
     labels_test = df_test_clusters["cluster"].values
 
-    silhouette_test = None
-    if n_clusters > 1 and len(np.unique(labels_test)) > 1:
-        silhouette_test = silhouette_score(X_test_scaled, labels_test)
+    silhouette_test = compute_silhouette(X_test_scaled, labels_test)
 
     if silhouette_test is not None:
         print(f"[TEST] Silhouette score (teste): {silhouette_test:.4f}")
@@ -751,7 +794,7 @@ def main(
     compute_cluster_stability(df_train_clusters, df_test_clusters)
 
     # 10) Centros dos clusters (espaço original, para interpretação)
-    feature_cols_train = [c for c in df_train_feat.columns if c != "company_id"]
+    feature_cols_train = feature_columns(df_train_feat)
 
     centers_scaled = kmeans.cluster_centers_             # (k, n_features escaladas)
     centers = scaler.inverse_transform(centers_scaled)   # voltar ao espaço original
@@ -818,7 +861,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n-clusters",
         type=int,
-        default=3,
+        default=5,
         help="Número de clusters do K-Means (ex: 3 para pequeno/médio/grande).",
     )
 
@@ -832,8 +875,36 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sub-k",
         type=int,
-        default=4,
+        default=3,
         help="Número de subclusters dentro do cluster alvo (se <=1, desativa subcluster).",
+    )
+
+    parser.add_argument(
+        "--features",
+        type=str,
+        default=None,
+        help="Lista de features separadas por vírgulas; se omitido usa default.",
+    )
+
+    parser.add_argument(
+        "--es-hosts",
+        type=str,
+        default=None,
+        help="Hosts do OpenSearch separados por vírgulas (sobrepõe env ES_HOSTS).",
+    )
+
+    parser.add_argument(
+        "--es-user",
+        type=str,
+        default=None,
+        help="User do OpenSearch (sobrepõe env ES_USER).",
+    )
+
+    parser.add_argument(
+        "--es-password",
+        type=str,
+        default=None,
+        help="Password do OpenSearch (sobrepõe env ES_PASSWORD).",
     )
 
     args = parser.parse_args()
@@ -846,4 +917,8 @@ if __name__ == "__main__":
         n_clusters=args.n_clusters,
         sub_target_cluster=args.sub_target_cluster,
         sub_k=args.sub_k,
+        feature_names=[f.strip() for f in args.features.split(",")] if args.features else None,
+        es_hosts=args.es_hosts.split(",") if args.es_hosts else None,
+        es_user=args.es_user,
+        es_password=args.es_password,
     )
