@@ -1,14 +1,3 @@
-"""
-kmeans_tpr.py
-
-Treina um modelo K-Means para clusterizar empresas por "grandeza"
-usando métricas L1 já calculadas no Wazuh (índice metrics-l1-60m*).
-
-- Treino:  2025-10-01 a 2025-10-15 (inclusive)
-- Teste:   2025-10-16 a 2025-10-31 (inclusive)
-
-"""
-
 import argparse
 from datetime import datetime, timezone
 import warnings
