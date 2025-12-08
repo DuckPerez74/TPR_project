@@ -2,16 +2,13 @@ import argparse
 import pandas as pd
 from opensearchpy import OpenSearch
 from tqdm import tqdm
+from config import OPENSEARCH_HOST, OPENSEARCH_USER, OPENSEARCH_PASSWORD
 
-ES_HOST = "https://100.125.228.80:9200"
-ES_USER = "admin"
-ES_PASSWORD = "SecretPassword"
 
 def get_es_client():
-    """Create OpenSearch client."""
     client = OpenSearch(
-        hosts=[ES_HOST],
-        http_auth=(ES_USER, ES_PASSWORD),
+        hosts=[OPENSEARCH_HOST],
+        http_auth=(OPENSEARCH_USER, OPENSEARCH_PASSWORD),
         verify_certs=False,
         ssl_assert_hostname=False,
         ssl_show_warn=False,
@@ -22,18 +19,6 @@ def get_es_client():
     return client
 
 def analyze_entity_coverage(window, start_date, end_date, min_samples=2000):
-    """
-    Analyze how many samples each entity has.
-
-    Args:
-        window: Time window (10, 30, 60)
-        start_date: Start date (ISO 8601)
-        end_date: End date (ISO 8601)
-        min_samples: Minimum samples required for individual model
-
-    Returns:
-        DataFrame with entity statistics
-    """
     print(f"Analyzing entity data coverage...")
     print(f"  Window: {window}m")
     print(f"  Period: {start_date} to {end_date}")

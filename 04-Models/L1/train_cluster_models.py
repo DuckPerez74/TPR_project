@@ -33,8 +33,6 @@ def check_model_exists(cluster_id, window, base_output_dir):
 
 
 def train_cluster_model(cluster_id, entity_file, window, train_start, train_end, test_start, test_end, base_output_dir, device):
-    """Train model for a single cluster."""
-
     cluster_dir = Path(base_output_dir) / f"cluster-{cluster_id}"
     os.makedirs(cluster_dir, exist_ok=True)
 

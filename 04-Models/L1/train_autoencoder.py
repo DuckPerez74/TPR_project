@@ -26,10 +26,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-
-ES_HOST = "https://100.125.228.80:9200"
-ES_USER = "admin"
-ES_PASSWORD = "SecretPassword"
+from config import OPENSEARCH_HOST, OPENSEARCH_USER, OPENSEARCH_PASSWORD
 
 FEATURE_LIST = [
     'total_requests', 'mean_requests_per_minute', 'max_requests_per_minute',
@@ -67,8 +64,6 @@ OUTPUT_DIR = Path(".")
 
 
 class AutoEncoder(nn.Module):
-    """Auto-encoder for anomaly detection."""
-
     def __init__(self, input_dim, encoding_dim=12, hidden_dim=30):
         super(AutoEncoder, self).__init__()
 
@@ -101,17 +96,15 @@ class AutoEncoder(nn.Module):
         return self.encoder(x)
 
     def reconstruction_error(self, x):
-        """Calculate MSE reconstruction error per sample."""
         reconstructed = self.forward(x)
         mse = torch.mean((x - reconstructed) ** 2, dim=1)
         return mse
 
 
 def get_es_client():
-    """Create OpenSearch client."""
     client = OpenSearch(
-        hosts=[ES_HOST],
-        http_auth=(ES_USER, ES_PASSWORD),
+        hosts=[OPENSEARCH_HOST],
+        http_auth=(OPENSEARCH_USER, OPENSEARCH_PASSWORD),
         verify_certs=False,
         ssl_assert_hostname=False,
         ssl_show_warn=False,
@@ -122,7 +115,6 @@ def get_es_client():
     return client
 
 def load_entity_ids(filepath=None, manual_ids=None):
-    """Load entity IDs from CSV or use manual list."""
     if manual_ids:
         return manual_ids
 
@@ -133,7 +125,6 @@ def load_entity_ids(filepath=None, manual_ids=None):
     return df['company_id'].unique().tolist()
 
 def fetch_metrics(client, entity_ids, start_time, end_time, index_pattern):
-    """Fetch L1 metrics from OpenSearch for specified entities and time range."""
     print(f"Fetching metrics from {index_pattern}...")
     print(f"  Entities: {len(entity_ids)}")
     print(f"  Time range: {start_time} to {end_time}")
@@ -187,7 +178,6 @@ def fetch_metrics(client, entity_ids, start_time, end_time, index_pattern):
 
 
 def preprocess_data(df_train, df_test, feature_list):
-    """Extract features, handle NaNs, and normalize."""
     print(f"\nPreprocessing data...")
 
     missing_features = [f for f in feature_list if f not in df_train.columns]
@@ -218,7 +208,6 @@ def preprocess_data(df_train, df_test, feature_list):
 
 
 def train_model(X_train_scaled, val_split=0.2, device='cuda'):
-    """Train auto-encoder model."""
     print(f"\nTraining model on {device}...")
 
     X_train, X_val = train_test_split(X_train_scaled, test_size=val_split, random_state=42)
@@ -290,7 +279,6 @@ def train_model(X_train_scaled, val_split=0.2, device='cuda'):
 
 
 def evaluate_model(model, X_train_tensor, X_val_tensor, X_test_scaled, device='cuda'):
-    """Calculate reconstruction errors and thresholds."""
     print("\nEvaluating model...")
 
     X_test_tensor = torch.FloatTensor(X_test_scaled).to(device)
@@ -325,7 +313,6 @@ def evaluate_model(model, X_train_tensor, X_val_tensor, X_test_scaled, device='c
 
 
 def save_artifacts(model_name, model, scaler, feature_list, thresholds, history, metadata, output_dir):
-    """Save all model artifacts."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 

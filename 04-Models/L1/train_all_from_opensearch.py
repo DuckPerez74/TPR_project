@@ -5,17 +5,13 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from opensearchpy import OpenSearch
-
-ES_HOST = "https://100.125.228.80:9200"
-ES_USER = "admin"
-ES_PASSWORD = "SecretPassword"
+from config import OPENSEARCH_HOST, OPENSEARCH_USER, OPENSEARCH_PASSWORD
 
 
 def get_es_client():
-    """Create OpenSearch client."""
     client = OpenSearch(
-        hosts=[ES_HOST],
-        http_auth=(ES_USER, ES_PASSWORD),
+        hosts=[OPENSEARCH_HOST],
+        http_auth=(OPENSEARCH_USER, OPENSEARCH_PASSWORD),
         verify_certs=False,
         ssl_assert_hostname=False,
         ssl_show_warn=False,
@@ -79,7 +75,6 @@ def fetch_all_entities(window, start_date, end_date):
 
 
 def check_model_exists(entity_id, window, base_output_dir):
-    """Check if model already exists."""
     entity_dir = Path(base_output_dir) / f"entity-{entity_id}"
     model_name = f"entity-{entity_id}-{window}m.pth"
     model_path = entity_dir / model_name
@@ -87,8 +82,6 @@ def check_model_exists(entity_id, window, base_output_dir):
 
 
 def train_entity_model(entity_id, window, train_start, train_end, test_start, test_end, base_output_dir, device):
-    """Train model for a single entity."""
-
     entity_dir = Path(base_output_dir) / f"entity-{entity_id}"
     os.makedirs(entity_dir, exist_ok=True)
 
