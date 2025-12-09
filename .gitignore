@@ -1,3 +1,5 @@
 .idea/*
 
 03-Clusters/*.png
+03-Clusters/*.joblib
+03-Clusters/*.txt

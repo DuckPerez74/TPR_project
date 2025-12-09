@@ -11,6 +11,7 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import RobustScaler
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
+from joblib import dump
 
 import matplotlib.pyplot as plt
 
@@ -817,6 +818,20 @@ def main(
         sub_target_cluster=sub_target_cluster,
     )
 
+    # 12) Guardar modelo e scaler para previsão futura
+    print("\n[MODEL] A guardar modelo e scaler...")
+    dump(kmeans, 'kmeans_model.joblib')
+    dump(scaler, 'scaler_model.joblib')
+    
+    # Guardar também os nomes das features para referência
+    feature_cols_train = feature_columns(df_train_feat)
+    with open('kmeans_features.txt', 'w') as f:
+        f.write(','.join(feature_cols_train))
+    
+    print(f"[MODEL] Modelo guardado em: kmeans_model.joblib")
+    print(f"[MODEL] Scaler guardado em: scaler_model.joblib")
+    print(f"[MODEL] Features guardadas em: kmeans_features.txt")
+
     # Para uso em Jupyter, se quiseres importar main()
     return df_train_feat, df_train_clusters, df_test_feat, df_test_clusters, scaler, kmeans
 
@@ -850,7 +865,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n-clusters",
         type=int,
-        default=5,
+        default=3,
         help="Número de clusters do K-Means (ex: 3 para pequeno/médio/grande).",
     )
 
@@ -864,7 +879,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sub-k",
         type=int,
-        default=3,
+        default=0,
         help="Número de subclusters dentro do cluster alvo (se <=1, desativa subcluster).",
     )
 
