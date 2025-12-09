@@ -1,0 +1,10 @@
+<!-- Add this to /var/ossec/etc/ossec.conf on Wazuh Manager -->
+
+<wodle name="command">
+  <disabled>no</disabled>
+  <tag>anomaly-detection</tag>
+  <command>/var/ossec/wodles/anomaly-detection/main.py</command>
+  <interval>1m</interval>
+  <run_on_start>yes</run_on_start>
+  <timeout>300</timeout>
+</wodle>
