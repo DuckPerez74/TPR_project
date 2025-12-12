@@ -1,0 +1,19 @@
+@echo off
+echo ========================================================
+echo INICIANDO PROCESSAMENTO L2 (COMPORTAMENTAL) - MES DE SETEMBRO - Janela 60 minutos
+echo ========================================================
+
+
+
+REM --- MES 2 (Setembro) ---
+
+echo.
+echo [8/13] L2: A processar semana de 30-Set a 01-Out...
+python .\extracao-metricas-tpr-layer-02.py --minutes 60 --start-date "2025-09-30T09:00:00" --end-date "2025-10-01T00:00:00"
+
+
+echo.
+echo ========================================================
+echo PROCESSAMENTO L2 CONCLUIDO!
+echo ========================================================
+pause
