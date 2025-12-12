@@ -1,0 +1,119 @@
+{
+  "version": "1.0.0",
+  "environment": "production",
+  "opensearch": {
+    "host": "${OPENSEARCH_HOST}",
+    "username": "${OPENSEARCH_USER}",
+    "password": "${OPENSEARCH_PASSWORD}",
+    "verify_certs": false,
+    "timeout": 30,
+    "max_retries": 3
+  },
+  "indices": {
+    "raw_logs": {
+      "pattern": "wazuh-alerts-4.x-*",
+      "company_id_field": "data.entities"
+    },
+    "metrics": {
+      "name": "metrics-tpr",
+      "create_if_missing": true
+    }
+  },
+  "observation_windows": {
+    "enabled": [
+      10,
+      30,
+      60
+    ],
+    "default_lookback": 60
+  },
+  "execution_schedule": {
+    "interval_seconds": 60,
+    "windows": {
+      "10": [
+        0,
+        10,
+        20,
+        30,
+        40,
+        50
+      ],
+      "30": [
+        0,
+        30
+      ],
+      "60": [
+        0
+      ]
+    }
+  },
+  "metrics": {
+    "layers": {
+      "L1": {
+        "enabled": true,
+        "save_schedule": {
+          "10": "always",
+          "30": [
+            0,
+            30
+          ],
+          "60": [
+            0
+          ]
+        }
+      },
+      "L2": {
+        "enabled": true,
+        "dimensions": [
+          "user",
+          "route"
+        ],
+        "save_schedule": {
+          "60": [
+            0
+          ]
+        }
+      }
+    }
+  },
+  "detection": {
+    "enabled": true,
+    "skip_if_no_models": true,
+    "parallel_layers": true,
+    "hierarchical_drill_down": true,
+    "model_priority": [
+      "entity",
+      "cluster"
+    ],
+    "threshold_fallback": 0.01,
+    "min_samples_for_detection": 10
+  },
+  "models": {
+    "entity_models_path": "models/entity_models",
+    "cluster_models_path": "models/cluster_models",
+    "user_models_path": "models/user_models"
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "${LOG_FILE}",
+    "anomaly_file": "${ANOMALY_LOG_FILE}",
+    "format": "json",
+    "max_size_mb": 100,
+    "backup_count": 5
+  },
+  "performance": {
+    "max_execution_time_seconds": 300,
+    "batch_size": 2500
+  },
+  "features": {
+    "save_metrics": true,
+    "log_detection_runs": true
+  },
+  "warmup": {
+    "enabled": true,
+    "start_date": "2025-08-06T00:00:00Z",
+    "end_date": "2025-12-12T23:59:59Z",
+    "chunk_hours": 3,
+    "max_workers": 4
+  }
+}
