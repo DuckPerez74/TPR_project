@@ -86,6 +86,27 @@ class L1MetricsCalculator(MetricsCalculator):
             metrics['unique_accounts'] = metrics['unique_operators']
             metrics['account_diversity_ratio'] = metrics.get('unique_accounts', 0) / total_requests
 
+        # Account Type Metrics
+        if 'data.account' in df.columns:
+            account_types = df['data.account'].dropna()
+            if not account_types.empty:
+                account_counts = account_types.value_counts()
+
+                # Distribution by account type
+                metrics['requests_by_account_type'] = account_counts.to_dict()
+
+                # Individual ratios
+                metrics['admin_request_ratio'] = (account_types == 'admin').sum() / total_requests
+                metrics['manager_request_ratio'] = (account_types == 'manager').sum() / total_requests
+                metrics['technician_request_ratio'] = (account_types == 'technician').sum() / total_requests
+
+                # Diversity
+                metrics['account_type_entropy'] = calculate_entropy(account_types)
+            else:
+                metrics['admin_request_ratio'] = 0
+                metrics['manager_request_ratio'] = 0
+                metrics['technician_request_ratio'] = 0
+
         if 'data.api_module' in df.columns:
             api_modules = df['data.api_module'].dropna()
             metrics['unique_api_modules'] = api_modules.nunique()

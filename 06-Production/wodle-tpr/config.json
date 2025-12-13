@@ -11,8 +11,9 @@
   },
   "indices": {
     "raw_logs": {
-      "pattern": "wazuh-alerts-4.x-*",
-      "company_id_field": "data.entities"
+      "pattern": "wazuh-infraspeak*",
+      "company_id_field": "data.entities",
+      "location_filter": "/logs/nginx/api.production.access.log"
     },
     "metrics": {
       "name": "metrics-tpr",
@@ -21,8 +22,6 @@
   },
   "observation_windows": {
     "enabled": [
-      10,
-      30,
       60
     ],
     "default_lookback": 60
@@ -111,9 +110,9 @@
   },
   "warmup": {
     "enabled": true,
-    "start_date": "2025-08-06T00:00:00Z",
-    "end_date": "2025-12-12T23:59:59Z",
+    "start_date": "2025-11-01T00:00:00Z",
+    "end_date": "2025-12-12T00:00:00Z",
     "chunk_hours": 3,
-    "max_workers": 4
+    "max_workers": 2
   }
 }

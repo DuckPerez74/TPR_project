@@ -9,22 +9,32 @@ class LogFetcher:
     def __init__(self, client, config: dict):
         self.client = client
         self.index_pattern = config.get('indices', {}).get('raw_logs', {}).get('pattern', 'wazuh-alerts-4.x-*')
+        self.location_filter = config.get('indices', {}).get('raw_logs', {}).get('location_filter')
         self.batch_size = config.get('performance', {}).get('batch_size', 10000)
 
     def fetch_logs(self, start_time: datetime, end_time: datetime, max_retries: int = 3) -> pd.DataFrame:
+        must_filters = [
+            {
+                "range": {
+                    "timestamp": {
+                        "gte": start_time.isoformat(),
+                        "lt": end_time.isoformat()
+                    }
+                }
+            }
+        ]
+
+        if self.location_filter:
+            must_filters.append({
+                "match_phrase": {
+                    "location": self.location_filter
+                }
+            })
+
         query = {
             "query": {
                 "bool": {
-                    "must": [
-                        {
-                            "range": {
-                                "timestamp": {
-                                    "gte": start_time.isoformat(),
-                                    "lt": end_time.isoformat()
-                                }
-                            }
-                        }
-                    ]
+                    "must": must_filters
                 }
             },
             "sort": [{"timestamp": "asc"}]

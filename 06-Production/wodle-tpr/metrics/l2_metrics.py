@@ -213,6 +213,13 @@ class L2MetricsCalculator(MetricsCalculator):
             if not method_counts.empty:
                 metrics['primary_http_method'] = method_counts.index[0]
 
+        # Account Type for this User
+        if 'data.account' in df.columns:
+            account_types = df['data.account'].dropna()
+            if not account_types.empty:
+                # Get the most common account type for this user (should be consistent)
+                metrics['account_type'] = account_types.mode()[0] if len(account_types.mode()) > 0 else 'unknown'
+
         return metrics
 
     def _calculate_ip_specific(self, df: pd.DataFrame) -> dict:
@@ -266,10 +273,27 @@ class L2MetricsCalculator(MetricsCalculator):
             ua_counts = df['data.browser'].nunique()
             metrics['user_agent_switches'] = ua_counts
 
+        # Account Type Metrics for IP
+        if 'data.account' in df.columns and total > 0:
+            account_types = df['data.account'].dropna()
+            if not account_types.empty:
+                account_counts = account_types.value_counts()
+
+                # Distribution
+                metrics['account_type_distribution'] = {
+                    acc_type: round((count / len(account_types)) * 100, 2)
+                    for acc_type, count in account_counts.items()
+                }
+
+                # Diversity - helpful to detect shared IPs or compromised accounts
+                metrics['account_type_diversity'] = round(calculate_entropy(account_types), 4)
+                metrics['unique_account_types'] = account_types.nunique()
+
         return metrics
 
     def _calculate_route_specific(self, df: pd.DataFrame) -> dict:
         metrics = {}
+        total = len(df)
 
         if 'data.operator_or_user_id' in df.columns:
             metrics['unique_users'] = df['data.operator_or_user_id'].nunique()
@@ -280,13 +304,139 @@ class L2MetricsCalculator(MetricsCalculator):
         if 'data.method' in df.columns:
             method_counts = df['data.method'].value_counts()
             if not method_counts.empty:
-                total = method_counts.sum()
+                total_methods = method_counts.sum()
                 metrics['method_distribution'] = {
-                    method: round((count / total) * 100, 2)
+                    method: round((count / total_methods) * 100, 2)
                     for method, count in method_counts.items()
                 }
 
+        # Account Type Metrics for Route
+        if 'data.account' in df.columns and total > 0:
+            account_types = df['data.account'].dropna()
+            if not account_types.empty:
+                account_counts = account_types.value_counts()
+
+                # Usage rates by account type
+                metrics['admin_usage_rate'] = round((account_types == 'admin').sum() / total, 4)
+                metrics['manager_usage_rate'] = round((account_types == 'manager').sum() / total, 4)
+                metrics['technician_usage_rate'] = round((account_types == 'technician').sum() / total, 4)
+
+                # Distribution percentages
+                metrics['account_type_distribution'] = {
+                    acc_type: round((count / len(account_types)) * 100, 2)
+                    for acc_type, count in account_counts.items()
+                }
+
+                # Diversity
+                metrics['account_type_diversity'] = round(calculate_entropy(account_types), 4)
+
+                # Unusual Account Access Detection (Historical Baseline)
+                metrics['unusual_account_access'] = 0
+                if self.client and '@timestamp' in df.columns and 'data.route_uri' in df.columns:
+                    try:
+                        current_ts = df['@timestamp'].max()
+                        route_uri = df['data.route_uri'].dropna()
+                        if not route_uri.empty:
+                            route = str(route_uri.iloc[0])
+
+                            # Get historical account type distribution for this route
+                            baseline_dist = self._get_route_account_baseline(route, current_ts)
+
+                            # Check if any current account type is unusual (< 5% historically)
+                            UNUSUAL_THRESHOLD = 5.0  # 5% threshold
+
+                            for acc_type in account_counts.index:
+                                historical_pct = baseline_dist.get(acc_type, 0.0)
+
+                                # If this account type has < 5% historical usage, it's unusual
+                                if historical_pct < UNUSUAL_THRESHOLD:
+                                    metrics['unusual_account_access'] = 1
+                                    # Store which account type is unusual for debugging
+                                    if 'unusual_account_types' not in metrics:
+                                        metrics['unusual_account_types'] = []
+                                    metrics['unusual_account_types'].append(acc_type)
+
+                            # Store baseline for reference
+                            if baseline_dist:
+                                metrics['historical_account_distribution'] = baseline_dist
+                    except Exception:
+                        pass
+
         return metrics
+
+    def _get_route_account_baseline(self, route: str, current_time) -> dict:
+        """
+        Fetch historical account type distribution for a specific route.
+        Returns percentage of each account type that historically accessed this route.
+        """
+        date_key = current_time.strftime("%Y-%m-%d") if hasattr(current_time, 'strftime') else str(current_time)[:10]
+        cache_key = f"route_account_{route}_{date_key}"
+
+        # Limit cache size
+        if len(self.baseline_cache) > 1000:
+            keys_to_remove = list(self.baseline_cache.keys())[:500]
+            for k in keys_to_remove:
+                del self.baseline_cache[k]
+
+        if cache_key in self.baseline_cache:
+            return self.baseline_cache[cache_key]
+
+        # Default: empty distribution
+        distribution = {}
+
+        try:
+            if not self.client:
+                return distribution
+
+            end_date = pd.to_datetime(current_time)
+            start_date = end_date - pd.Timedelta(days=15)
+
+            query = {
+                "size": 0,
+                "query": {
+                    "bool": {
+                        "filter": [
+                            {"term": {"dimension": "route"}},
+                            {"term": {"dimension_value": route}},
+                            {"term": {"layer": "L2"}},
+                            {
+                                "range": {
+                                    "@timestamp": {
+                                        "gte": start_date.isoformat(),
+                                        "lt": end_date.isoformat()
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                "aggs": {
+                    "account_types": {
+                        "terms": {
+                            "field": "metrics.account_type_distribution",
+                            "size": 10
+                        }
+                    }
+                }
+            }
+
+            response = self.client.search(index="metrics-tpr", body=query, ignore_unavailable=True)
+
+            # Extract account type percentages from aggregation
+            buckets = response.get('aggregations', {}).get('account_types', {}).get('buckets', [])
+
+            total_docs = sum(bucket.get('doc_count', 0) for bucket in buckets)
+            if total_docs > 0:
+                for bucket in buckets:
+                    acc_type = bucket.get('key')
+                    count = bucket.get('doc_count', 0)
+                    distribution[acc_type] = round((count / total_docs) * 100, 2)
+
+        except Exception:
+            pass
+
+        self.baseline_cache[cache_key] = distribution
+        return distribution
 
     def _get_baseline(self, dimension: str, value: str, current_time) -> dict:
         """
