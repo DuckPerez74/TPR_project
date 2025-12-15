@@ -5,6 +5,19 @@ from utils.metrics_helpers import calculate_entropy, calculate_gini
 
 
 class L1MetricsCalculator(MetricsCalculator):
+    def __init__(self, config: dict):
+        super().__init__(config)
+        l1_config = config.get('metrics', {}).get('layers', {}).get('L1', {})
+
+        # Load thresholds from config
+        thresholds = l1_config.get('thresholds', {})
+        self.slow_request_threshold = thresholds.get('slow_request_seconds', 1.0)
+        self.very_slow_request_threshold = thresholds.get('very_slow_request_seconds', 5.0)
+
+        # Load patterns from config
+        patterns = l1_config.get('patterns', {})
+        self.bot_detection_pattern = patterns.get('bot_detection', 'bot|crawler')
+
     def calculate(self, df: pd.DataFrame, window: int) -> dict:
         if df.empty:
             return {}
@@ -39,6 +52,8 @@ class L1MetricsCalculator(MetricsCalculator):
             else:
                 metrics['burst_score'] = 0
 
+            del requests_per_minute  # Free memory
+
         if 'data.status_code' in df.columns:
             status_codes = pd.to_numeric(df['data.status_code'], errors='coerce').dropna()
             if not status_codes.empty:
@@ -61,8 +76,8 @@ class L1MetricsCalculator(MetricsCalculator):
                 metrics['p90_response_time'] = response_times.quantile(0.90)
                 metrics['p95_response_time'] = response_times.quantile(0.95)
                 metrics['p99_response_time'] = response_times.quantile(0.99)
-                metrics['pct_slow_requests'] = (response_times > 1).sum() / total_requests * 100
-                metrics['pct_very_slow_requests'] = (response_times > 5).sum() / total_requests * 100
+                metrics['pct_slow_requests'] = (response_times > self.slow_request_threshold).sum() / total_requests * 100
+                metrics['pct_very_slow_requests'] = (response_times > self.very_slow_request_threshold).sum() / total_requests * 100
 
         if 'data.srcip' in df.columns:
             ips = df['data.srcip'].dropna()
@@ -80,6 +95,8 @@ class L1MetricsCalculator(MetricsCalculator):
 
             top_10_pct_ip_count = int(np.ceil(0.1 * unique_ips))
             metrics['ip_concentration_top10pct'] = ip_counts.head(top_10_pct_ip_count).sum() / total_requests
+
+            del ips, ip_counts  # Free memory
 
         if 'data.operator_or_user_id' in df.columns:
             metrics['unique_operators'] = df['data.operator_or_user_id'].nunique()
@@ -141,7 +158,7 @@ class L1MetricsCalculator(MetricsCalculator):
             user_agents = df['data.browser'].dropna()
             metrics['unique_user_agents'] = user_agents.nunique()
             metrics['user_agent_entropy'] = calculate_entropy(user_agents)
-            metrics['bot_like_ua_percentage'] = user_agents.str.contains('bot|crawler', case=False, na=False).sum() / total_requests * 100
+            metrics['bot_like_ua_percentage'] = user_agents.str.contains(self.bot_detection_pattern, case=False, na=False).sum() / total_requests * 100
 
         if 'data.method' in df.columns:
             methods = df['data.method'].dropna()

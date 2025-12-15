@@ -22,7 +22,9 @@
   },
   "observation_windows": {
     "enabled": [
-      60
+      60,
+      30,
+      10
     ],
     "default_lookback": 60
   },
@@ -59,6 +61,13 @@
           "60": [
             0
           ]
+        },
+        "thresholds": {
+          "slow_request_seconds": 1.0,
+          "very_slow_request_seconds": 5.0
+        },
+        "patterns": {
+          "bot_detection": "bot|crawler|spider|scraper"
         }
       },
       "L2": {
@@ -71,7 +80,34 @@
           "60": [
             0
           ]
-        }
+        },
+        "keywords": {
+          "admin_endpoints": "admin|config|setup|root|dashboard",
+          "sensitive_data": "billing|finance|salary|payments|cpf|nif|ssn|credit_card|passport",
+          "backup_files": "backup|dump|archive|tar.gz|zip|sql|bak",
+          "export_operations": "export|download|report|csv|xlsx|pdf",
+          "bulk_operations": "batch|bulk|multi|mass"
+        },
+        "thresholds": {
+          "working_hours_start": 8,
+          "working_hours_end": 19,
+          "velocity_impossibility_kmh": 800,
+          "unusual_account_threshold_pct": 5.0
+        },
+        "http_methods": {
+          "modification_methods": [
+            "PUT",
+            "POST",
+            "PATCH",
+            "DELETE"
+          ]
+        },
+        "account_types": [
+          "admin",
+          "manager",
+          "technician",
+          "user"
+        ]
       }
     }
   },
@@ -85,12 +121,22 @@
       "cluster"
     ],
     "threshold_fallback": 0.01,
-    "min_samples_for_detection": 10
+    "min_samples_for_detection": 10,
+    "cluster_prediction": {
+      "enabled": true,
+      "lookback_days": 7,
+      "min_windows_required": 24,
+      "cache_enabled": true,
+      "cache_ttl_minutes": 60,
+      "cache_max_entities": 1000
+    }
   },
   "models": {
-    "entity_models_path": "models/entity_models",
-    "cluster_models_path": "models/cluster_models",
-    "user_models_path": "models/user_models"
+    "observation_window": 60,
+    "entity_models_path": "models/entity_models/60min",
+    "cluster_models_path": "models/cluster_models/60min",
+    "user_models_path": "models/user_models/60min",
+    "route_models_path": "models/route_models/60min"
   },
   "logging": {
     "level": "INFO",
@@ -101,8 +147,9 @@
     "backup_count": 5
   },
   "performance": {
-    "max_execution_time_seconds": 300,
-    "batch_size": 2500
+    "max_execution_time_seconds": 600,
+    "batch_size": 10000,
+    "max_logs_per_fetch": 100000
   },
   "features": {
     "save_metrics": true,
@@ -110,9 +157,9 @@
   },
   "warmup": {
     "enabled": true,
-    "start_date": "2025-11-01T00:00:00Z",
-    "end_date": "2025-12-12T00:00:00Z",
+    "start_date": "2025-12-01T00:00:00Z",
+    "end_date": "2025-12-15T00:00:00Z",
     "chunk_hours": 3,
-    "max_workers": 2
+    "max_workers": 8
   }
 }

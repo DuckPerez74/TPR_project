@@ -27,6 +27,14 @@ class ModelTrainer:
         if len(X) < 100:
             return None
 
+        # Validate data: check for NaN, Inf, or invalid values
+        if not np.all(np.isfinite(X)):
+            import sys
+            nan_count = np.sum(np.isnan(X))
+            inf_count = np.sum(np.isinf(X))
+            print(f"  WARNING: Entity {entity_id} has invalid values (NaN: {nan_count}, Inf: {inf_count}), skipping", file=sys.stderr)
+            return None
+
         scaler = MinMaxScaler()
         X_scaled = scaler.fit_transform(X)
 
@@ -36,7 +44,15 @@ class ModelTrainer:
         X_val_tensor = torch.FloatTensor(X_val).to(self.device)
 
         train_dataset = TensorDataset(X_train_tensor, X_train_tensor)
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
+
+        # Use adaptive batch size to ensure training happens even with small datasets
+        effective_batch_size = min(self.batch_size, len(X_train))
+
+        # BatchNorm requires at least 2 samples per batch, so drop_last=True if batch size < 2
+        # or if we might end up with a single-sample batch
+        drop_last = (effective_batch_size < 2) or (len(X_train) % effective_batch_size == 1)
+
+        train_loader = DataLoader(train_dataset, batch_size=effective_batch_size, shuffle=True, drop_last=drop_last)
 
         model = AutoEncoder(self.input_dim, self.encoding_dim, self.hidden_dim).to(self.device)
         criterion = nn.MSELoss()

@@ -11,7 +11,8 @@ class IsolationForestTrainer:
         self.n_estimators = n_estimators
         self.contamination = contamination
         self.random_state = random_state
-        self.user_id_pattern = re.compile(r'^[a-zA-Z0-9_\-\.@]+$')
+        # Updated pattern to allow route characters: /, {, }, :, ?, *, and other common URL/route chars
+        self.user_id_pattern = re.compile(r'^[a-zA-Z0-9_\-\.@/{}:?*+=&%]+$')
         self.max_user_id_length = 256
 
     def train_user_model(self, user_id, metrics_data):
@@ -34,6 +35,14 @@ class IsolationForestTrainer:
             if X.ndim != 2:
                 import sys
                 print(f"ERROR: metrics_data must be 2D array for user {user_id}", file=sys.stderr)
+                return None
+
+            # Validate data: check for NaN, Inf, or invalid values
+            if not np.all(np.isfinite(X)):
+                import sys
+                nan_count = np.sum(np.isnan(X))
+                inf_count = np.sum(np.isinf(X))
+                print(f"WARNING: User/Route {user_id} has invalid values (NaN: {nan_count}, Inf: {inf_count}), skipping", file=sys.stderr)
                 return None
 
             scaler = StandardScaler()

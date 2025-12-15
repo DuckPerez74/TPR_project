@@ -1,5 +1,6 @@
 import pandas as pd
 import re
+from functools import lru_cache
 from .base import MetricsCalculator
 from utils.metrics_helpers import calculate_entropy
 from utils.geo_helpers import GeoIPHelper, haversine_distance
@@ -11,17 +12,56 @@ class L2MetricsCalculator(MetricsCalculator):
         l2_config = config.get('metrics', {}).get('layers', {}).get('L2', {})
         self.dimensions = l2_config.get('dimensions', ['user', 'route'])
         self.max_dimension_value_length = 512
-        
+
+        # Load keywords from config
+        keywords = l2_config.get('keywords', {})
+        self.admin_keywords = keywords.get('admin_endpoints', 'admin|config|setup|root|dashboard')
+        self.sensitive_keywords = keywords.get('sensitive_data', 'billing|finance|salary|payments|cpf|nif|ssn|credit_card')
+        self.backup_keywords = keywords.get('backup_files', 'backup|dump|archive|tar.gz|zip|sql')
+        self.export_keywords = keywords.get('export_operations', 'export|download|report|csv|xlsx')
+        self.bulk_keywords = keywords.get('bulk_operations', 'batch|bulk|multi')
+
+        # Load thresholds from config
+        thresholds = l2_config.get('thresholds', {})
+        self.working_hours_start = thresholds.get('working_hours_start', 8)
+        self.working_hours_end = thresholds.get('working_hours_end', 19)
+        self.velocity_impossibility_kmh = thresholds.get('velocity_impossibility_kmh', 800)
+        self.unusual_account_threshold = thresholds.get('unusual_account_threshold_pct', 5.0)
+
+        # Load HTTP methods from config
+        http_methods = l2_config.get('http_methods', {})
+        self.modification_methods = http_methods.get('modification_methods', ['PUT', 'POST', 'PATCH', 'DELETE'])
+
+        # Load account types from config
+        self.account_types = l2_config.get('account_types', ['admin', 'manager', 'technician'])
+
         # Initialize GeoIP Helper
         self.geo_helper = GeoIPHelper()
-        
-        # Cache for baselines to avoid repeated queries (Key: "dim_value_date")
+
+        # Cache for baselines with size limit to prevent memory leak
+        # LRU cache keeps only the 500 most recent entries
         self.baseline_cache = {}
+        self.baseline_cache_max_size = 500
 
         self.dimension_field_mapping = {
             'user': 'data.operator_or_user_id',
             'route': 'data.route_uri'
         }
+
+    def _cleanup_cache_if_needed(self):
+        """Cleanup baseline cache if it exceeds max size to prevent memory leak"""
+        if len(self.baseline_cache) > self.baseline_cache_max_size:
+            # Keep only the most recent half of entries (simple FIFO cleanup)
+            # In production, you might use OrderedDict or more sophisticated LRU
+            items = list(self.baseline_cache.items())
+            keep_count = self.baseline_cache_max_size // 2
+            self.baseline_cache = dict(items[-keep_count:])
+
+    def cleanup(self):
+        """Cleanup resources to free memory"""
+        self.baseline_cache.clear()
+        if hasattr(self, 'geo_helper') and self.geo_helper:
+            self.geo_helper.close()
 
     def calculate(self, df: pd.DataFrame, dimension: str) -> list:
         if df.empty or dimension not in self.dimensions:
@@ -51,6 +91,9 @@ class L2MetricsCalculator(MetricsCalculator):
                 import sys
                 print(f"WARNING: L2 metrics calculation failed for {dimension}={value_str}: {str(e)}", file=sys.stderr)
                 continue
+            finally:
+                # Free subset DataFrame to prevent accumulation
+                del subset
 
         return results
 
@@ -73,12 +116,14 @@ class L2MetricsCalculator(MetricsCalculator):
                     metrics['error_rate'] = 0.0
                     metrics['success_rate'] = 0.0
                     metrics['auth_failure_ratio'] = 0.0
+            del status  # Free memory
 
         if 'data.response_time' in df.columns:
             times = pd.to_numeric(df['data.response_time'], errors='coerce').dropna()
             if not times.empty:
                 metrics['mean_response_time'] = round(times.mean(), 4)
                 metrics['p95_response_time'] = round(times.quantile(0.95), 4)
+            del times  # Free memory
 
         if 'data.size' in df.columns:
             sizes = pd.to_numeric(df['data.size'], errors='coerce').dropna()
@@ -86,6 +131,7 @@ class L2MetricsCalculator(MetricsCalculator):
                 metrics['mean_response_size'] = round(sizes.mean(), 2)
             else:
                 metrics['mean_response_size'] = 0.0
+            del sizes  # Free memory
 
         # --- Historical Deviations (Z-Scores) ---
         # Only calculated if we have an OpenSearch client and valid dimension value
@@ -142,32 +188,28 @@ class L2MetricsCalculator(MetricsCalculator):
         methods = df['data.method'].astype(str).fillna("") if 'data.method' in df.columns else pd.Series([""] * total)
         
         # 1. Privilege Endpoint Ratio
-        admin_keywords = 'admin|config|setup|root|dashboard'
-        metrics['privilege_endpoint_ratio'] = urls.str.contains(admin_keywords, case=False).sum() / total
+        metrics['privilege_endpoint_ratio'] = urls.str.contains(self.admin_keywords, case=False).sum() / total
 
         # 2. Sensitive Data Access
-        sensitive_keywords = 'billing|finance|salary|payments|cpf|nif|ssn|credit_card'
-        metrics['sensitive_data_access_rate'] = urls.str.contains(sensitive_keywords, case=False).sum() / total
+        metrics['sensitive_data_access_rate'] = urls.str.contains(self.sensitive_keywords, case=False).sum() / total
 
         # 5. Config Modification Attempts
-        config_mods = (methods.isin(['PUT', 'POST', 'PATCH', 'DELETE'])) & (urls.str.contains('config|setting', case=False))
+        config_mods = (methods.isin(self.modification_methods)) & (urls.str.contains('config|setting', case=False))
         metrics['config_modification_attempts'] = config_mods.sum()
 
         # 6. Backup Access
-        backup_keywords = 'backup|dump|archive|tar.gz|zip|sql'
-        metrics['backup_access_indicator'] = urls.str.contains(backup_keywords, case=False).sum()
+        metrics['backup_access_indicator'] = urls.str.contains(self.backup_keywords, case=False).sum()
 
         # 7. Export Usage
-        export_keywords = 'export|download|report|csv|xlsx'
-        metrics['export_endpoint_usage'] = urls.str.contains(export_keywords, case=False).sum()
+        metrics['export_endpoint_usage'] = urls.str.contains(self.export_keywords, case=False).sum()
 
         # 9. Bulk Operation
-        metrics['bulk_operation_ratio'] = urls.str.contains('batch|bulk|multi', case=False).sum()
+        metrics['bulk_operation_ratio'] = urls.str.contains(self.bulk_keywords, case=False).sum()
 
         # 10. Working Hours Deviation
         if '@timestamp' in df.columns:
             log_hours = pd.to_datetime(df['@timestamp']).dt.hour
-            metrics['working_hours_deviation'] = len(df[~log_hours.between(8, 19)]) / total
+            metrics['working_hours_deviation'] = len(df[~log_hours.between(self.working_hours_start, self.working_hours_end)]) / total
 
         # 13. Velocity Impossibility (User Dimension)
         metrics['velocity_impossibility'] = 0
@@ -198,7 +240,7 @@ class L2MetricsCalculator(MetricsCalculator):
                         prev_loc = curr_loc
                         prev_time = ts
                     
-                    if max_speed > 800:
+                    if max_speed > self.velocity_impossibility_kmh:
                         metrics['velocity_impossibility'] = 1
             except Exception:
                 pass
@@ -213,12 +255,12 @@ class L2MetricsCalculator(MetricsCalculator):
             if not method_counts.empty:
                 metrics['primary_http_method'] = method_counts.index[0]
 
-        # Account Type for this User
+        # Account for this User
         if 'data.account' in df.columns:
-            account_types = df['data.account'].dropna()
-            if not account_types.empty:
-                # Get the most common account type for this user (should be consistent)
-                metrics['account_type'] = account_types.mode()[0] if len(account_types.mode()) > 0 else 'unknown'
+            accounts = df['data.account'].dropna()
+            if not accounts.empty:
+                # Get the most common account for this user (should be consistent)
+                metrics['account'] = accounts.mode()[0] if len(accounts.mode()) > 0 else 'unknown'
 
         return metrics
 
@@ -234,32 +276,28 @@ class L2MetricsCalculator(MetricsCalculator):
         # --- Behavioral Metrics (Ported for IP Dimension) ---
         
         # 1. Privilege Endpoint Ratio
-        admin_keywords = 'admin|config|setup|root|dashboard'
-        metrics['privilege_endpoint_ratio'] = urls.str.contains(admin_keywords, case=False).sum() / total
+        metrics['privilege_endpoint_ratio'] = urls.str.contains(self.admin_keywords, case=False).sum() / total
 
         # 2. Sensitive Data Access
-        sensitive_keywords = 'billing|finance|salary|payments|cpf|nif|ssn|credit_card'
-        metrics['sensitive_data_access_rate'] = urls.str.contains(sensitive_keywords, case=False).sum() / total
+        metrics['sensitive_data_access_rate'] = urls.str.contains(self.sensitive_keywords, case=False).sum() / total
 
         # 5. Config Modification Attempts
-        config_mods = (methods.isin(['PUT', 'POST', 'PATCH', 'DELETE'])) & (urls.str.contains('config|setting', case=False))
+        config_mods = (methods.isin(self.modification_methods)) & (urls.str.contains('config|setting', case=False))
         metrics['config_modification_attempts'] = config_mods.sum()
 
         # 6. Backup Access
-        backup_keywords = 'backup|dump|archive|tar.gz|zip|sql'
-        metrics['backup_access_indicator'] = urls.str.contains(backup_keywords, case=False).sum()
+        metrics['backup_access_indicator'] = urls.str.contains(self.backup_keywords, case=False).sum()
 
         # 7. Export Usage
-        export_keywords = 'export|download|report|csv|xlsx'
-        metrics['export_endpoint_usage'] = urls.str.contains(export_keywords, case=False).sum()
+        metrics['export_endpoint_usage'] = urls.str.contains(self.export_keywords, case=False).sum()
 
         # 9. Bulk Operation
-        metrics['bulk_operation_ratio'] = urls.str.contains('batch|bulk|multi', case=False).sum()
+        metrics['bulk_operation_ratio'] = urls.str.contains(self.bulk_keywords, case=False).sum()
 
         # 10. Working Hours Deviation
         if '@timestamp' in df.columns:
             log_hours = pd.to_datetime(df['@timestamp']).dt.hour
-            metrics['working_hours_deviation'] = len(df[~log_hours.between(8, 19)]) / total
+            metrics['working_hours_deviation'] = len(df[~log_hours.between(self.working_hours_start, self.working_hours_end)]) / total
 
         # --- Base IP Metrics ---
 
@@ -316,10 +354,9 @@ class L2MetricsCalculator(MetricsCalculator):
             if not account_types.empty:
                 account_counts = account_types.value_counts()
 
-                # Usage rates by account type
-                metrics['admin_usage_rate'] = round((account_types == 'admin').sum() / total, 4)
-                metrics['manager_usage_rate'] = round((account_types == 'manager').sum() / total, 4)
-                metrics['technician_usage_rate'] = round((account_types == 'technician').sum() / total, 4)
+                # Usage rates by account type (dynamic based on config)
+                for account_type in self.account_types:
+                    metrics[f'{account_type}_usage_rate'] = round((account_types == account_type).sum() / total, 4)
 
                 # Distribution percentages
                 metrics['account_type_distribution'] = {
@@ -342,14 +379,12 @@ class L2MetricsCalculator(MetricsCalculator):
                             # Get historical account type distribution for this route
                             baseline_dist = self._get_route_account_baseline(route, current_ts)
 
-                            # Check if any current account type is unusual (< 5% historically)
-                            UNUSUAL_THRESHOLD = 5.0  # 5% threshold
-
+                            # Check if any current account type is unusual based on threshold
                             for acc_type in account_counts.index:
                                 historical_pct = baseline_dist.get(acc_type, 0.0)
 
-                                # If this account type has < 5% historical usage, it's unusual
-                                if historical_pct < UNUSUAL_THRESHOLD:
+                                # If this account type has less than threshold historical usage, it's unusual
+                                if historical_pct < self.unusual_account_threshold:
                                     metrics['unusual_account_access'] = 1
                                     # Store which account type is unusual for debugging
                                     if 'unusual_account_types' not in metrics:
@@ -396,9 +431,9 @@ class L2MetricsCalculator(MetricsCalculator):
                 "query": {
                     "bool": {
                         "filter": [
-                            {"term": {"dimension": "route"}},
-                            {"term": {"dimension_value": route}},
-                            {"term": {"layer": "L2"}},
+                            {"term": {"dimension.keyword": "route"}},
+                            {"term": {"dimension_value.keyword": route}},
+                            {"term": {"layer.keyword": "L2"}},
                             {
                                 "range": {
                                     "@timestamp": {
@@ -420,7 +455,7 @@ class L2MetricsCalculator(MetricsCalculator):
                 }
             }
 
-            response = self.client.search(index="metrics-tpr", body=query, ignore_unavailable=True)
+            response = self.client.search(index="metrics-tpr*", body=query, ignore_unavailable=True)
 
             # Extract account type percentages from aggregation
             buckets = response.get('aggregations', {}).get('account_types', {}).get('buckets', [])
@@ -435,6 +470,7 @@ class L2MetricsCalculator(MetricsCalculator):
         except Exception:
             pass
 
+        self._cleanup_cache_if_needed()
         self.baseline_cache[cache_key] = distribution
         return distribution
 
@@ -474,9 +510,9 @@ class L2MetricsCalculator(MetricsCalculator):
                 "query": {
                     "bool": {
                         "filter": [
-                            {"term": {"dimension": dimension}},
-                            {"term": {"dimension_value": value}},
-                            {"term": {"layer": "L2"}},
+                            {"term": {"dimension.keyword": dimension}},
+                            {"term": {"dimension_value.keyword": value}},
+                            {"term": {"layer.keyword": "L2"}},
                             {
                                 "range": {
                                     "@timestamp": {
@@ -496,7 +532,7 @@ class L2MetricsCalculator(MetricsCalculator):
                 }
             }
             
-            response = self.client.search(index="metrics-tpr", body=query, ignore_unavailable=True)
+            response = self.client.search(index="metrics-tpr*", body=query, ignore_unavailable=True)
             
             def extract_stats(agg_name):
                 stats = response.get('aggregations', {}).get(agg_name, {})
@@ -513,7 +549,8 @@ class L2MetricsCalculator(MetricsCalculator):
         except Exception as e:
             # Silently fail and return defaults to avoid interrupting warmup
             pass
-            
+
         # Save to cache
+        self._cleanup_cache_if_needed()
         self.baseline_cache[cache_key] = baselines
         return baselines

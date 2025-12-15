@@ -79,7 +79,7 @@ class HierarchicalAnalyzer:
                 if dim_metrics:
                     dim_value = dim_result.get('dimension_value')
                     dimension = dim_result.get('dimension')
-                    anomaly, score, model_used, _ = detector.detect(entity_id, dim_metrics, 'L2', dimension_value=dim_value)
+                    anomaly, score, model_used, _ = detector.detect(entity_id, dim_metrics, 'L2', dimension_value=dim_value, dimension=dimension)
 
                     if anomaly:
                         l2_details.append({

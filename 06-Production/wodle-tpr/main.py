@@ -167,33 +167,25 @@ def main():
         analyzer = HierarchicalAnalyzer(config)
 
         detection_enabled = config.get('detection', {}).get('enabled', True)
-        skip_if_no_models = config.get('detection', {}).get('skip_if_no_models', True)
 
-        if skip_if_no_models:
-            has_entity_models = len(detector.model_loader.entity_models) > 0
-            has_cluster_models = len(detector.model_loader.cluster_models) > 0
-            if not has_entity_models and not has_cluster_models:
-                detection_enabled = False
-                logger.log_error("No models found, running in warmup mode (metrics only)", None)
+        if not detector.model_loader.has_any_models_on_disk():
+            logger.log_error("No models found. Run warmup.py first to collect metrics, then train.py to train models.", None)
+            sys.exit(1)
 
         start_time, end_time = get_time_range(current_time, max_window)
-
         start_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
 
-        all_data = fetcher.fetch_logs(start_time, end_time)
-        all_data = preprocessor.prepare(all_data)
-
-        if all_data.empty:
-            logger.log_error("No data fetched for time range", None)
-            sys.exit(0)
-
-        active_entities = preprocessor.get_active_entities(all_data)
+        # Optimization: Get active entities first, then fetch logs per entity
+        # This prevents loading massive datasets into memory
+        active_entities = fetcher.get_active_entities(start_time, end_time)
 
         if not active_entities:
-            logger.log_error("No active entities found in data", None)
+            logger.log_error("No active entities found in time range", None)
             sys.exit(0)
 
         anomalies_found = 0
+        processed_entities = 0
+
         for entity_id in active_entities:
             if shutdown_flag.should_continue() is False:
                 logger.log_error("Shutdown requested, stopping entity processing", None)
@@ -204,18 +196,34 @@ def main():
                 logger.log_error(f"Max execution time ({max_execution_time}s) exceeded", None)
                 break
 
-            entity_df = preprocessor.filter_by_entity(all_data, entity_id)
+            # Fetch only this entity's logs
+            entity_df = fetcher.fetch_logs_by_entity(entity_id, start_time, end_time)
+            
+            if entity_df.empty:
+                continue
+
+            # Preprocess specific entity data
+            entity_df = preprocessor.prepare(entity_df)
 
             if process_entity(entity_id, entity_df, current_time, scheduler,
                             l1_calc, l2_calc, storage, detector, analyzer, logger,
                             detection_enabled, shutdown_flag):
                 anomalies_found += 1
+            
+            processed_entities += 1
+            
+            # Explicit cleanup
+            del entity_df
+
+        # Flush any remaining metrics in buffer
+        storage.flush_metrics()
 
         end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         execution_time = end_ms - start_ms
 
         if config.get('features', {}).get('log_detection_runs', True):
-            logger.log_detection_run(len(active_entities), anomalies_found, execution_time)
+            logger.log_detection_run(processed_entities, anomalies_found, execution_time)
+
 
     except (KeyError, ValueError, TypeError) as e:
         if logger:

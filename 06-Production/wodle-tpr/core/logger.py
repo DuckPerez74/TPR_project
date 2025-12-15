@@ -135,8 +135,6 @@ class WazuhLogger:
 
             if window_result.get('l2_dimension') == 'user':
                 alert['rule']['description'] = f'TPR User Anomaly Detected - {window_result.get("l2_dimension_value")}'
-            elif window_result.get('l2_dimension') == 'source_ip':
-                alert['rule']['description'] = f'TPR Source IP Anomaly Detected - {window_result.get("l2_dimension_value")}'
             elif window_result.get('l2_dimension') == 'route':
                 alert['rule']['description'] = f'TPR Route Anomaly Detected - {window_result.get("l2_dimension_value")}'
 

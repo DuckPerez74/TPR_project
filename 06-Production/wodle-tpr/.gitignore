@@ -31,6 +31,10 @@ models/
 *.h5
 *.pt
 
+# Database cache
+*.db
+model_assignments.db
+
 # GeoIP database
 *.mmdb
 
@@ -44,6 +48,3 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
-
-
-.env
