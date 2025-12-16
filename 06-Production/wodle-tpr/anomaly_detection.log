@@ -107,3 +107,34 @@
 {"timestamp": "2025-12-15T15:00:01.719915Z", "event_type": "anomaly_alert_logged", "entity_id": "5671", "layer": "L1", "window": 60, "score": 0.484094}
 {"timestamp": "2025-12-15T15:00:04.600183Z", "event_type": "error", "message": "Max execution time (600s) exceeded"}
 {"timestamp": "2025-12-15T15:00:06.095663Z", "event_type": "detection_run", "entities_analyzed": 185, "anomalies_found": 57, "execution_time_ms": 602317}
+{"timestamp": "2025-12-16T16:51:26.056211Z", "event_type": "anomaly_alert_logged", "entity_id": "149", "layer": "L2", "window": 10, "score": 0.089705}
+{"timestamp": "2025-12-16T16:51:42.578193Z", "event_type": "anomaly_alert_logged", "entity_id": "199", "layer": "L2", "window": 10, "score": 0.040756}
+{"timestamp": "2025-12-16T16:52:17.547673Z", "event_type": "anomaly_alert_logged", "entity_id": "24", "layer": "L1", "window": 10, "score": 0.025353}
+{"timestamp": "2025-12-16T16:52:33.142318Z", "event_type": "anomaly_alert_logged", "entity_id": "1777", "layer": "L1", "window": 10, "score": 0.04795}
+{"timestamp": "2025-12-16T16:54:56.026426Z", "event_type": "anomaly_alert_logged", "entity_id": "2664", "layer": "L1", "window": 10, "score": 0.024705}
+{"timestamp": "2025-12-16T16:56:04.595841Z", "event_type": "anomaly_alert_logged", "entity_id": "2725", "layer": "L2", "window": 30, "score": 0.017811}
+{"timestamp": "2025-12-16T16:56:56.548337Z", "event_type": "anomaly_alert_logged", "entity_id": "1911", "layer": "L2", "window": 10, "score": 0.032853}
+{"timestamp": "2025-12-16T16:57:03.185566Z", "event_type": "anomaly_alert_logged", "entity_id": "3020", "layer": "L1", "window": 60, "score": 0.111668}
+{"timestamp": "2025-12-16T16:57:08.701269Z", "event_type": "anomaly_alert_logged", "entity_id": "1969", "layer": "L2", "window": 10, "score": 0.040573}
+{"timestamp": "2025-12-16T16:57:09.892943Z", "event_type": "anomaly_alert_logged", "entity_id": "3634", "layer": "L1", "window": 60, "score": 0.223695}
+{"timestamp": "2025-12-16T16:57:35.620163Z", "event_type": "anomaly_alert_logged", "entity_id": "1844", "layer": "L1", "window": 60, "score": 0.043611}
+{"timestamp": "2025-12-16T16:57:41.412216Z", "event_type": "anomaly_alert_logged", "entity_id": "1871", "layer": "L1", "window": 60, "score": 0.349819}
+{"timestamp": "2025-12-16T16:57:45.072403Z", "event_type": "anomaly_alert_logged", "entity_id": "2177", "layer": "L1", "window": 60, "score": 0.013268}
+{"timestamp": "2025-12-16T16:58:19.612212Z", "event_type": "anomaly_alert_logged", "entity_id": "1155", "layer": "L1", "window": 60, "score": 0.117246}
+{"timestamp": "2025-12-16T16:58:25.965284Z", "event_type": "anomaly_alert_logged", "entity_id": "2603", "layer": "L1", "window": 60, "score": 0.070278}
+{"timestamp": "2025-12-16T16:58:33.928697Z", "event_type": "anomaly_alert_logged", "entity_id": "2308", "layer": "L1", "window": 10, "score": 0.018408}
+{"timestamp": "2025-12-16T16:58:37.318851Z", "event_type": "anomaly_alert_logged", "entity_id": "73", "layer": "L1", "window": 60, "score": 0.047742}
+{"timestamp": "2025-12-16T16:58:58.724302Z", "event_type": "anomaly_alert_logged", "entity_id": "2517", "layer": "L1", "window": 10, "score": 0.023634}
+{"timestamp": "2025-12-16T16:59:24.220427Z", "event_type": "anomaly_alert_logged", "entity_id": "231", "layer": "L2", "window": 30, "score": 0.040441}
+{"timestamp": "2025-12-16T16:59:28.106286Z", "event_type": "anomaly_alert_logged", "entity_id": "326", "layer": "L1", "window": 10, "score": 0.281378}
+{"timestamp": "2025-12-16T16:59:32.467564Z", "event_type": "anomaly_alert_logged", "entity_id": "3036", "layer": "L2", "window": 10, "score": 0.018109}
+{"timestamp": "2025-12-16T16:59:43.283629Z", "event_type": "anomaly_alert_logged", "entity_id": "2839", "layer": "L2", "window": 10, "score": 0.087247}
+{"timestamp": "2025-12-16T16:59:56.238888Z", "event_type": "anomaly_alert_logged", "entity_id": "1171", "layer": "L2", "window": 30, "score": 0.011757}
+{"timestamp": "2025-12-16T16:59:59.217405Z", "event_type": "anomaly_alert_logged", "entity_id": "3770", "layer": "L2", "window": 10, "score": 0.091796}
+{"timestamp": "2025-12-16T17:00:00.077754Z", "event_type": "anomaly_alert_logged", "entity_id": "1725", "layer": "L1", "window": 10, "score": 0.112999}
+{"timestamp": "2025-12-16T17:00:17.311799Z", "event_type": "anomaly_alert_logged", "entity_id": "3288", "layer": "L1", "window": 60, "score": 0.195927}
+{"timestamp": "2025-12-16T17:00:24.209840Z", "event_type": "anomaly_alert_logged", "entity_id": "2875", "layer": "L2", "window": 10, "score": 0.013607}
+{"timestamp": "2025-12-16T17:00:27.604095Z", "event_type": "anomaly_alert_logged", "entity_id": "2332", "layer": "L1", "window": 60, "score": 0.062233}
+{"timestamp": "2025-12-16T17:00:36.787226Z", "event_type": "anomaly_alert_logged", "entity_id": "185", "layer": "L1", "window": 10, "score": 0.015185}
+{"timestamp": "2025-12-16T17:00:49.001960Z", "event_type": "error", "message": "Max execution time (600s) exceeded"}
+{"timestamp": "2025-12-16T17:00:51.662765Z", "event_type": "detection_run", "entities_analyzed": 139, "anomalies_found": 29, "execution_time_ms": 603087}
