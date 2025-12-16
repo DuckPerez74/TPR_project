@@ -120,7 +120,7 @@
       "entity",
       "cluster"
     ],
-    "threshold_fallback": 0.01,
+    "threshold_fallback": 0.1,
     "min_samples_for_detection": 10,
     "cluster_prediction": {
       "enabled": true,
@@ -136,7 +136,8 @@
     "entity_models_path": "models/entity_models/60min",
     "cluster_models_path": "models/cluster_models/60min",
     "user_models_path": "models/user_models/60min",
-    "route_models_path": "models/route_models/60min"
+    "route_models_path": "models/route_models/60min",
+    "n_clusters": 3
   },
   "logging": {
     "level": "INFO",

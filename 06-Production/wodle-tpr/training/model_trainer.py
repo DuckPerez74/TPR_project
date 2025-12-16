@@ -57,6 +57,11 @@ class ModelTrainer:
         model = AutoEncoder(self.input_dim, self.encoding_dim, self.hidden_dim).to(self.device)
         criterion = nn.MSELoss()
         optimizer = optim.Adam(model.parameters(), lr=self.learning_rate)
+        
+        # Learning rate scheduler - reduces LR when validation loss plateaus
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6
+        )
 
         best_val_loss = float('inf')
         patience = 15
@@ -78,6 +83,9 @@ class ModelTrainer:
             with torch.no_grad():
                 val_reconstructed = model(X_val_tensor)
                 val_loss = criterion(val_reconstructed, X_val_tensor).item()
+
+            # Step the scheduler based on validation loss
+            scheduler.step(val_loss)
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss

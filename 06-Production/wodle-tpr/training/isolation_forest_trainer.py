@@ -7,7 +7,7 @@ from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 
 class IsolationForestTrainer:
-    def __init__(self, n_estimators=100, contamination=0.01, random_state=42):
+    def __init__(self, n_estimators=100, contamination='auto', random_state=42):
         self.n_estimators = n_estimators
         self.contamination = contamination
         self.random_state = random_state
@@ -29,7 +29,7 @@ class IsolationForestTrainer:
         try:
             X = np.array(metrics_data)
 
-            if len(X) < 20:
+            if len(X) < 50:
                 return None
 
             if X.ndim != 2:
