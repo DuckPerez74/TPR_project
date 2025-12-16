@@ -76,7 +76,7 @@ def train_l1_models_for_window(config, client, metrics_index, window_minutes, wa
         print(f"  WARNING: No entities with sufficient data for K-Means")
         return None
 
-    n_clusters = config.get('models', {}).get('n_clusters', 5)
+    n_clusters = config.get('models', {}).get('n_clusters', 3)
     clusterer = KMeansClusterer(n_clusters=n_clusters, random_state=42)
     cluster_assignments = clusterer.fit(entity_mean_metrics)
 
@@ -117,7 +117,7 @@ def train_l1_models_for_window(config, client, metrics_index, window_minutes, wa
     entity_models_trained = 0
     entity_models_list = []
 
-    n_clusters = config.get('models', {}).get('n_clusters', 5)
+    n_clusters = config.get('models', {}).get('n_clusters', 3)
     cluster_data = {cid: [] for cid in range(n_clusters)}
 
     for i, entity_id in enumerate(entities_with_data):
@@ -238,7 +238,7 @@ def train_l2_models_for_dimension(config, client, metrics_index, dimension, wind
     print(f"\n  Training Isolation Forest models for {dimension}s...")
     print(f"  {'-'*56}")
 
-    trainer = IsolationForestTrainer(n_estimators=100, contamination=0.01, random_state=42)
+    trainer = IsolationForestTrainer(n_estimators=100, contamination='auto', random_state=42)
 
     models_base = Path(__file__).parent.parent / 'models'
     dimension_models_path = models_base / f'{dimension}_models' / f'{window_minutes}min'
@@ -384,7 +384,7 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
 
         print(f"    Entities with ≥20 samples: {len(entity_mean_metrics)}")
 
-        n_clusters = config.get('models', {}).get('n_clusters', 5)
+        n_clusters = config.get('models', {}).get('n_clusters', 3)
         clusterer = KMeansClusterer(n_clusters=n_clusters, random_state=42)
         cluster_assignments = clusterer.fit(entity_mean_metrics)
 
@@ -447,7 +447,7 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
 
     cluster_data = {}
     if train_cluster or train_l1:
-        n_clusters = config.get('models', {}).get('n_clusters', 5)
+        n_clusters = config.get('models', {}).get('n_clusters', 3)
         cluster_data = {window: {cid: [] for cid in range(n_clusters)} for window in observation_windows}
 
     l2_accumulated_data = {}
