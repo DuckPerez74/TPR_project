@@ -4,6 +4,7 @@ from functools import lru_cache
 from .base import MetricsCalculator
 from utils.metrics_helpers import calculate_entropy
 from utils.geo_helpers import GeoIPHelper, haversine_distance
+from constants import VELOCITY_IMPOSSIBILITY_KMH, MODIFICATION_METHODS
 
 class L2MetricsCalculator(MetricsCalculator):
     def __init__(self, config: dict, client=None):
@@ -13,7 +14,7 @@ class L2MetricsCalculator(MetricsCalculator):
         self.dimensions = l2_config.get('dimensions', ['user', 'route'])
         self.max_dimension_value_length = 512
 
-        # Load keywords from config
+        # Load keywords from config (these are customizable per deployment)
         keywords = l2_config.get('keywords', {})
         self.admin_keywords = keywords.get('admin_endpoints', 'admin|config|setup|root|dashboard')
         self.sensitive_keywords = keywords.get('sensitive_data', 'billing|finance|salary|payments|cpf|nif|ssn|credit_card')
@@ -21,19 +22,19 @@ class L2MetricsCalculator(MetricsCalculator):
         self.export_keywords = keywords.get('export_operations', 'export|download|report|csv|xlsx')
         self.bulk_keywords = keywords.get('bulk_operations', 'batch|bulk|multi')
 
-        # Load thresholds from config
+        # Load thresholds from config (customizable per deployment)
         thresholds = l2_config.get('thresholds', {})
         self.working_hours_start = thresholds.get('working_hours_start', 8)
         self.working_hours_end = thresholds.get('working_hours_end', 19)
-        self.velocity_impossibility_kmh = thresholds.get('velocity_impossibility_kmh', 800)
         self.unusual_account_threshold = thresholds.get('unusual_account_threshold_pct', 5.0)
 
-        # Load HTTP methods from config
-        http_methods = l2_config.get('http_methods', {})
-        self.modification_methods = http_methods.get('modification_methods', ['PUT', 'POST', 'PATCH', 'DELETE'])
+        # Use constants for fixed technical values
+        self.velocity_impossibility_kmh = VELOCITY_IMPOSSIBILITY_KMH
+        self.modification_methods = MODIFICATION_METHODS
 
-        # Load account types from config
+        # Load account types from config (customizable per deployment)
         self.account_types = l2_config.get('account_types', ['admin', 'manager', 'technician'])
+
 
         # Initialize GeoIP Helper
         self.geo_helper = GeoIPHelper()

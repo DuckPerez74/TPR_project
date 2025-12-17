@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from .base import MetricsCalculator
 from utils.metrics_helpers import calculate_entropy, calculate_gini
+from constants import SLOW_REQUEST_SECONDS, VERY_SLOW_REQUEST_SECONDS
 
 
 class L1MetricsCalculator(MetricsCalculator):
@@ -9,14 +10,14 @@ class L1MetricsCalculator(MetricsCalculator):
         super().__init__(config)
         l1_config = config.get('metrics', {}).get('layers', {}).get('L1', {})
 
-        # Load thresholds from config
-        thresholds = l1_config.get('thresholds', {})
-        self.slow_request_threshold = thresholds.get('slow_request_seconds', 1.0)
-        self.very_slow_request_threshold = thresholds.get('very_slow_request_seconds', 5.0)
+        # Use constants for thresholds (fixed technical values)
+        self.slow_request_threshold = SLOW_REQUEST_SECONDS
+        self.very_slow_request_threshold = VERY_SLOW_REQUEST_SECONDS
 
-        # Load patterns from config
+        # Load patterns from config (these are customizable)
         patterns = l1_config.get('patterns', {})
         self.bot_detection_pattern = patterns.get('bot_detection', 'bot|crawler')
+
 
     def calculate(self, df: pd.DataFrame, window: int) -> dict:
         if df.empty:

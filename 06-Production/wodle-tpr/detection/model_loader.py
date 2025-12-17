@@ -4,6 +4,7 @@ import torch
 from pathlib import Path
 import joblib
 from training.autoencoder import AutoEncoder
+from constants import THRESHOLD_PERCENTILE, THRESHOLD_FALLBACK
 
 
 class ModelLoader:
@@ -18,9 +19,11 @@ class ModelLoader:
         self.route_models_path = base_path / models_config.get('route_models_path', 'models/route_models')
         self.kmeans_path = base_path / 'models' / f'kmeans_{observation_window}min.pkl'
 
-        self.threshold_fallback = config.get('detection', {}).get('threshold_fallback', 0.01)
-        self.threshold_percentile = config.get('detection', {}).get('threshold_percentile', 'p99')
+        # Use constants for ML-tuned values
+        self.threshold_fallback = THRESHOLD_FALLBACK
+        self.threshold_percentile = THRESHOLD_PERCENTILE
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
         # Lazy loading caches
         self.entity_models = {}

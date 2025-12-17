@@ -4,7 +4,10 @@ from pathlib import Path
 from .model_loader import ModelLoader
 from .window_buffer import WindowBuffer
 from .model_assignment_cache import ModelAssignmentCache
-from constants import L1_FEATURE_ORDER, L2_USER_FEATURES, L2_ROUTE_FEATURES
+from constants import (
+    L1_FEATURE_ORDER, L2_USER_FEATURES, L2_ROUTE_FEATURES,
+    L1_SCORE_MULTIPLIER, L2_NORM_INPUT_MIN, L2_NORM_INPUT_MAX
+)
 
 
 class AnomalyDetector:
@@ -31,6 +34,31 @@ class AnomalyDetector:
         else:
             self.window_buffer = None
             self.assignment_cache = None
+
+        # Use constants for score normalization (ML-tuned values)
+        self.l1_norm_multiplier = L1_SCORE_MULTIPLIER
+        self.l2_norm_min = L2_NORM_INPUT_MIN
+        self.l2_norm_max = L2_NORM_INPUT_MAX
+
+
+    def _normalize_l1_score(self, mse: float, threshold: float) -> float:
+        """Normalize L1 (autoencoder) MSE score to 0-1 range.
+        
+        Values at threshold = 0.5, values at 2x threshold = 1.0
+        """
+        if threshold <= 0:
+            return min(1.0, mse)
+        return min(1.0, mse / (threshold * self.l1_norm_multiplier))
+
+    def _normalize_l2_score(self, score: float) -> float:
+        """Normalize L2 (Isolation Forest) score to 0-1 range.
+        
+        Maps typical range [-0.3, 0.5] to [0, 1]
+        """
+        range_size = self.l2_norm_max - self.l2_norm_min
+        if range_size <= 0:
+            return min(1.0, max(0.0, score))
+        return min(1.0, max(0.0, (score - self.l2_norm_min) / range_size))
 
     def detect(self, entity_id: str, metrics: dict, layer: str, **kwargs) -> tuple:
         dimension = kwargs.get('dimension')
@@ -67,8 +95,9 @@ class AnomalyDetector:
                 mse = model.reconstruction_error(X_tensor).cpu().item()
 
             is_anomaly = mse > threshold
+            normalized_score = self._normalize_l1_score(mse, threshold)
 
-            return is_anomaly, float(mse), f"entity_{entity_id}", None
+            return is_anomaly, float(normalized_score), f"entity_{entity_id}", None
         except (ValueError, TypeError, RuntimeError) as e:
             import sys
             print(f"WARNING: Entity model detection failed for {entity_id}: {str(e)}", file=sys.stderr)
@@ -113,8 +142,9 @@ class AnomalyDetector:
                 mse = model.reconstruction_error(X_tensor).cpu().item()
 
             is_anomaly = mse > threshold
+            normalized_score = self._normalize_l1_score(mse, threshold)
 
-            return is_anomaly, float(mse), f"cluster_{cluster_id}", cluster_id
+            return is_anomaly, float(normalized_score), f"cluster_{cluster_id}", cluster_id
         except (ValueError, TypeError, RuntimeError) as e:
             import sys
             print(f"WARNING: Cluster model detection failed for entity {entity_id}, cluster {cluster_id}: {str(e)}", file=sys.stderr)
@@ -237,8 +267,9 @@ class AnomalyDetector:
 
             is_anomaly = (prediction == -1)
             anomaly_score = -score
+            normalized_score = self._normalize_l2_score(anomaly_score)
 
-            return is_anomaly, float(anomaly_score), identifier, None
+            return is_anomaly, float(normalized_score), identifier, None
 
         except (ValueError, TypeError, AttributeError) as e:
             import sys
@@ -355,42 +386,39 @@ class AnomalyDetector:
             return False, 0.0, None, None
 
         # Run detection with each similar user's model
-        anomaly_votes = 0
-        total_votes = 0
         scores = []
 
         for similar_user_id, model, scaler in similar_users:
             try:
                 X_scaled = scaler.transform(metrics_vector)
-                prediction = model.predict(X_scaled)[0]
                 score = model.decision_function(X_scaled)[0]
-
-                if prediction == -1:
-                    anomaly_votes += 1
-
-                total_votes += 1
-                scores.append(-score)
+                scores.append(-score)  # Invert: higher = more anomalous
 
             except Exception as e:
-                print(f"WARNING: Voting failed for similar user {similar_user_id}: {str(e)}", file=sys.stderr)
+                print(f"WARNING: Scoring failed for similar user {similar_user_id}: {str(e)}", file=sys.stderr)
                 continue
 
-        if total_votes == 0:
-            # All voting failed - skip L2 detection
+        # Minimum voters and average score threshold
+        min_voters = 2
+        avg_score_threshold = 0.4  # 40% normalized score
+
+        if len(scores) < min_voters:
+            # Not enough models to make a decision
             return False, 0.0, None, None
 
-        # Majority voting (>50%)
-        anomaly_ratio = anomaly_votes / total_votes
-        is_anomaly = anomaly_ratio > 0.5
-        avg_score = sum(scores) / len(scores) if scores else 0.0
+        avg_score = sum(scores) / len(scores)
+        normalized_score = self._normalize_l2_score(avg_score)
+        
+        # Use average score instead of voting
+        is_anomaly = normalized_score > avg_score_threshold
 
-        model_info = f"user_voting_{account}_{total_votes}models_{anomaly_votes}anomalies"
+        model_info = f"user_avg_score_{len(scores)}models"
 
-        print(f"[Detector] User {user_id} voting result: {anomaly_votes}/{total_votes} anomalies "
-              f"(ratio={anomaly_ratio:.2f}, is_anomaly={is_anomaly})",
+        print(f"[Detector] User {user_id} avg score: {normalized_score:.2f} "
+              f"(threshold={avg_score_threshold}, is_anomaly={is_anomaly})",
               file=sys.stderr)
 
-        return is_anomaly, float(avg_score), model_info, None
+        return is_anomaly, float(normalized_score), model_info, None
 
     def _metrics_to_vector(self, metrics: dict, layer: str, dimension: str = None) -> np.ndarray:
         if layer == 'L1':

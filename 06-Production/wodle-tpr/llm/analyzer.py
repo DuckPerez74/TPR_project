@@ -124,15 +124,6 @@ class LLMAnalyzer:
         self._daily_calls += 1
 
     def should_analyze(self, anomaly_result: dict) -> bool:
-        """
-        Check if LLM analysis should be triggered.
-
-        Args:
-            anomaly_result: Result from HierarchicalAnalyzer
-
-        Returns:
-            True if LLM analysis should run
-        """
         if not self.enabled:
             return False
 
@@ -140,7 +131,20 @@ class LLMAnalyzer:
             return False
 
         selected_window = anomaly_result.get('selected_window', 60)
-        return selected_window == self.trigger_window
+        if selected_window != self.trigger_window:
+            return False
+
+        # Check risk_score threshold (default: 60% = 0.6)
+        min_risk_score = self.config.get('min_risk_score_for_analysis', 0.6)
+        risk_score = anomaly_result.get('risk_score', 0.0)
+        
+        if risk_score < min_risk_score:
+            self.logger.debug(
+                f"Skipping LLM analysis: risk_score {risk_score:.2%} < threshold {min_risk_score:.2%}"
+            )
+            return False
+
+        return True
 
     def analyze(self, entity_id: str, anomaly_result: dict,
                 metrics: dict, entity_df: pd.DataFrame) -> dict:

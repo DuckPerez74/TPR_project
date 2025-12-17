@@ -1,9 +1,10 @@
 {
-    "enabled": false,
+    "enabled": true,
     "provider": "anthropic",
     "model": "claude-sonnet-4-5-20250929",
     "api_key_env": "ANTHROPIC_API_KEY",
     "trigger_on_window": 10,
+    "min_risk_score_for_analysis": 0.6,
     "max_tokens_response": 1500,
     "timeout_seconds": 30,
     "temperature": 0.2,

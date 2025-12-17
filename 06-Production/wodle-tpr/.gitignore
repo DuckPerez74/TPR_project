@@ -18,7 +18,6 @@ ENV/
 *~
 
 # Logs
-*.log
 logs/
 
 # Environment variables
@@ -51,6 +50,8 @@ Thumbs.db
 
 docs/*
 .env
-anomaly_detection.log
+
 anomaly.log
 .claude
+
+*.log

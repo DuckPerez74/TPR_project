@@ -29,7 +29,6 @@ class WazuhLogger:
         # File paths for local logging (debugging)
         self.log_file = Path(log_config.get('file', '/var/ossec/logs/anomaly_detection.log'))
         self.anomaly_log_file = Path(log_config.get('anomaly_file', '/var/ossec/logs/anomaly.log'))
-        self.log_format = log_config.get('format', 'json')
         self.level = getattr(logging, log_config.get('level', 'INFO'))
 
         # Option to disable file logging entirely
@@ -46,6 +45,10 @@ class WazuhLogger:
         if self.enable_file_logging:
             max_bytes = log_config.get('max_size_mb', 100) * 1024 * 1024
             backup_count = log_config.get('backup_count', 5)
+
+            # Create parent directories if they don't exist
+            self.log_file.parent.mkdir(parents=True, exist_ok=True)
+            self.anomaly_log_file.parent.mkdir(parents=True, exist_ok=True)
 
             handler = RotatingFileHandler(
                 self.log_file,
@@ -156,16 +159,16 @@ class WazuhLogger:
             }
         }
 
-        # Add risk scoring data if available
+        # Add risk scoring data if available (as percentage 0-100%)
         if 'risk_score' in analysis_result:
-            event['tpr']['risk_score'] = round(analysis_result['risk_score'], 6)
+            event['tpr']['risk_score'] = round(analysis_result['risk_score'] * 100)
 
-            # Add risk components breakdown
+            # Add risk components breakdown (as percentages, rounded)
             if 'risk_components' in analysis_result:
                 components = analysis_result['risk_components']
-                event['tpr']['risk_l1'] = components.get('l1_weighted', 0.0)
-                event['tpr']['risk_l2_user'] = components.get('l2_user_weighted', 0.0)
-                event['tpr']['risk_l2_route'] = components.get('l2_route_weighted', 0.0)
+                event['tpr']['risk_l1'] = round(components.get('l1_weighted', 0.0) * 100)
+                event['tpr']['risk_l2_user'] = round(components.get('l2_user_weighted', 0.0) * 100)
+                event['tpr']['risk_l2_route'] = round(components.get('l2_route_weighted', 0.0) * 100)
 
         # Add L2-specific fields
         if layer == 'L2':
@@ -257,10 +260,7 @@ class WazuhLogger:
             'metrics_summary': metrics_summary
         }
 
-        if self.log_format == 'json':
-            self.logger.info(json.dumps(log_entry))
-        else:
-            self.logger.info(str(log_entry))
+        self.logger.info(json.dumps(log_entry))
 
     def log_detection_run(self, entities_analyzed: int, anomalies_found: int,
                           execution_time_ms: int):
@@ -273,10 +273,7 @@ class WazuhLogger:
             'execution_time_ms': execution_time_ms
         }
 
-        if self.log_format == 'json':
-            self.logger.info(json.dumps(log_entry))
-        else:
-            self.logger.info(str(log_entry))
+        self.logger.info(json.dumps(log_entry))
 
     def log_error(self, message: str, error: Exception = None):
         """Log error messages."""
@@ -290,10 +287,7 @@ class WazuhLogger:
             log_entry['error'] = str(error)
             log_entry['error_type'] = type(error).__name__
 
-        if self.log_format == 'json':
-            self.logger.error(json.dumps(log_entry))
-        else:
-            self.logger.error(str(log_entry))
+        self.logger.error(json.dumps(log_entry))
 
     def _get_severity(self, score: float) -> str:
         """Map anomaly score to severity label."""

@@ -1,6 +1,4 @@
 {
-  "version": "1.0.0",
-  "environment": "production",
   "opensearch": {
     "host": "${OPENSEARCH_HOST}",
     "username": "${OPENSEARCH_USER}",
@@ -25,11 +23,9 @@
       60,
       30,
       10
-    ],
-    "default_lookback": 60
+    ]
   },
   "execution_schedule": {
-    "interval_seconds": 60,
     "windows": {
       "10": [
         0,
@@ -62,10 +58,6 @@
             0
           ]
         },
-        "thresholds": {
-          "slow_request_seconds": 1.0,
-          "very_slow_request_seconds": 5.0
-        },
         "patterns": {
           "bot_detection": "bot|crawler|spider|scraper"
         }
@@ -77,6 +69,11 @@
           "route"
         ],
         "save_schedule": {
+          "10": "always",
+          "30": [
+            0,
+            30
+          ],
           "60": [
             0
           ]
@@ -91,16 +88,7 @@
         "thresholds": {
           "working_hours_start": 8,
           "working_hours_end": 19,
-          "velocity_impossibility_kmh": 800,
           "unusual_account_threshold_pct": 5.0
-        },
-        "http_methods": {
-          "modification_methods": [
-            "PUT",
-            "POST",
-            "PATCH",
-            "DELETE"
-          ]
         },
         "account_types": [
           "admin",
@@ -113,15 +101,8 @@
   },
   "detection": {
     "enabled": true,
-    "skip_if_no_models": true,
     "parallel_layers": true,
     "hierarchical_drill_down": true,
-    "model_priority": [
-      "entity",
-      "cluster"
-    ],
-    "threshold_percentile": "p99",
-    "threshold_fallback": 0.1,
     "min_score_for_alert": 0.05,
     "risk_scoring": {
       "enabled": true,
@@ -154,7 +135,6 @@
     "level": "INFO",
     "file": "${LOG_FILE}",
     "anomaly_file": "${ANOMALY_LOG_FILE}",
-    "format": "json",
     "max_size_mb": 100,
     "backup_count": 5,
     "enable_file_logging": true
@@ -165,7 +145,6 @@
     "max_logs_per_fetch": 100000
   },
   "features": {
-    "save_metrics": true,
     "log_detection_runs": true
   },
   "warmup": {
