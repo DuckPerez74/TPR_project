@@ -3,6 +3,7 @@ import sys
 import os
 import signal
 import threading
+import argparse
 from pathlib import Path
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -14,6 +15,19 @@ from data import LogFetcher, DataPreprocessor
 from metrics import L1MetricsCalculator, L2MetricsCalculator, MetricsStorage
 from detection import AnomalyDetector, HierarchicalAnalyzer
 from utils import get_time_range
+from llm import LLMAnalyzer
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='TPR Anomaly Detection Wodle')
+    parser.add_argument(
+        '--force-minute',
+        type=int,
+        choices=range(0, 60),
+        metavar='[0-59]',
+        help='Force execution as if current minute is this value (for testing)'
+    )
+    return parser.parse_args()
 
 
 class TimeoutError(Exception):
@@ -62,14 +76,15 @@ def timeout_handler(timeout_seconds, shutdown_flag):
 
 def process_entity(entity_id: str, entity_df, current_time: datetime,
                    scheduler, l1_calc, l2_calc, storage, detector, analyzer, logger,
-                   detection_enabled: bool, shutdown_flag):
+                   detection_enabled: bool, shutdown_flag, llm_analyzer=None,
+                   scheduling_minute: int = None):
 
     if shutdown_flag.should_continue() is False:
         return False
 
     l1_metrics_by_window = {}
     l2_metrics_by_window = {}
-    current_minute = current_time.minute
+    current_minute = scheduling_minute if scheduling_minute is not None else current_time.minute
 
     window_data = {}
     for window in [60, 30, 10]:
@@ -122,7 +137,19 @@ def process_entity(entity_id: str, entity_df, current_time: datetime,
         result = analyzer.analyze(detector, entity_id, l1_metrics_by_window, l2_metrics_by_window)
 
         if result is not None:
-            logger.log_anomaly_alert(entity_id, result)
+            alert_id = logger.log_anomaly_alert(entity_id, result)
+
+            if llm_analyzer and llm_analyzer.should_analyze(result):
+                try:
+                    # Use the configured trigger window for metrics
+                    trigger_window = llm_analyzer.trigger_window
+                    metrics = l1_metrics_by_window.get(trigger_window, l1_metrics_by_window.get(30, l1_metrics_by_window.get(60, {})))
+                    llm_result = llm_analyzer.analyze(entity_id, result, metrics, entity_df)
+                    if llm_result and not llm_result.get('error'):
+                        logger.log_llm_analysis(entity_id, llm_result, alert_id)
+                except Exception as e:
+                    logger.log_error(f"LLM analysis failed for entity {entity_id}", e)
+
             return True
     except (RuntimeError, ValueError, KeyError) as e:
         logger.log_error(f"Anomaly detection failed for entity {entity_id}", e)
@@ -132,9 +159,18 @@ def process_entity(entity_id: str, entity_df, current_time: datetime,
 
 def main():
     load_dotenv()
+    args = parse_args()
 
     shutdown_flag = GracefulShutdown()
     current_time = datetime.now(timezone.utc)
+    
+    # For testing: create a time with overridden minute for scheduling decisions
+    if args.force_minute is not None:
+        scheduling_time = current_time.replace(minute=args.force_minute, second=0, microsecond=0)
+        print(f"[TEST MODE] Forcing minute to :{args.force_minute:02d} for scheduling (real time: :{current_time.minute:02d})")
+    else:
+        scheduling_time = current_time
+    
     logger = None
 
     try:
@@ -150,7 +186,7 @@ def main():
 
         scheduler = Scheduler(config)
 
-        if not scheduler.should_execute(current_time):
+        if not scheduler.should_execute(scheduling_time):
             sys.exit(0)
 
         client = OpenSearchClient.get_instance(config)
@@ -165,6 +201,7 @@ def main():
 
         detector = AnomalyDetector(config)
         analyzer = HierarchicalAnalyzer(config)
+        llm_analyzer = LLMAnalyzer()
 
         detection_enabled = config.get('detection', {}).get('enabled', True)
 
@@ -207,7 +244,8 @@ def main():
 
             if process_entity(entity_id, entity_df, current_time, scheduler,
                             l1_calc, l2_calc, storage, detector, analyzer, logger,
-                            detection_enabled, shutdown_flag):
+                            detection_enabled, shutdown_flag, llm_analyzer,
+                            scheduling_minute=scheduling_time.minute):
                 anomalies_found += 1
             
             processed_entities += 1

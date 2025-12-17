@@ -122,6 +122,16 @@
     ],
     "threshold_percentile": "p99",
     "threshold_fallback": 0.1,
+    "min_score_for_alert": 0.05,
+    "risk_scoring": {
+      "enabled": true,
+      "threshold": 0.08,
+      "weights": {
+        "l1": 0.3,
+        "l2_user": 0.5,
+        "l2_route": 0.2
+      }
+    },
     "min_samples_for_detection": 10,
     "cluster_prediction": {
       "enabled": true,
@@ -146,7 +156,8 @@
     "anomaly_file": "${ANOMALY_LOG_FILE}",
     "format": "json",
     "max_size_mb": 100,
-    "backup_count": 5
+    "backup_count": 5,
+    "enable_file_logging": true
   },
   "performance": {
     "max_execution_time_seconds": 600,

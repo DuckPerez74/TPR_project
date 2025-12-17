@@ -1,0 +1,43 @@
+{
+  "_comment": "LLM Analyzer Configuration - Copy to llm_config.json and adjust values",
+
+  "enabled": true,
+  "_enabled_info": "Master switch to enable/disable LLM analysis. Set to false to disable without removing config.",
+
+  "provider": "anthropic",
+  "_provider_info": "LLM provider: 'anthropic' (Claude) or 'openai' (GPT). Requires corresponding API key.",
+
+  "model": "claude-sonnet-4-5-20250929",
+  "_model_info": "Model identifier. Examples: claude-sonnet-4-5-20250929, claude-3-5-sonnet-20241022, gpt-4-turbo, gpt-3.5-turbo",
+
+  "api_key_env": "ANTHROPIC_API_KEY",
+  "_api_key_env_info": "Environment variable name containing the API key. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in .env file.",
+
+  "trigger_on_window": 10,
+  "_trigger_on_window_info": "Which observation window (in minutes) triggers LLM analysis. Typical values: 10, 30, 60. Set to 10 for most granular (critical) alerts.",
+
+  "max_tokens_response": 1500,
+  "_max_tokens_response_info": "Maximum tokens in LLM response. Higher = more detailed analysis but higher cost. Range: 500-4000.",
+
+  "timeout_seconds": 30,
+  "_timeout_seconds_info": "API call timeout in seconds. Increase if getting timeout errors. Range: 10-60.",
+
+  "temperature": 0.2,
+  "_temperature_info": "LLM temperature (creativity). Lower = more consistent. For security analysis, keep between 0.0-0.3.",
+
+  "rate_limit": {
+    "max_calls_per_hour": 100,
+    "_max_calls_per_hour_info": "Maximum LLM API calls per hour. Prevents cost runaway. Adjust based on alert volume and budget.",
+
+    "max_calls_per_day": 1000,
+    "_max_calls_per_day_info": "Maximum LLM API calls per day. Hard limit for budget control."
+  },
+
+  "retry": {
+    "max_retries": 3,
+    "_max_retries_info": "Number of retry attempts on transient failures (rate limits, timeouts). Range: 1-5.",
+
+    "backoff_seconds": 2,
+    "_backoff_seconds_info": "Base seconds for exponential backoff. Retry delays: backoff^attempt (e.g., 2s, 4s, 8s). Range: 1-5."
+  }
+}

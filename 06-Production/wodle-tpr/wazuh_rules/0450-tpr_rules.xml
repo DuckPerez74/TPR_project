@@ -1,0 +1,108 @@
+<!--
+  TPR Anomaly Detection Rules
+  Copyright (C) 2024
+  
+  Rules for TPR Wodle events: 100000 - 100099
+  
+  These rules process events from the TPR anomaly detection wodle,
+  which sends events via socket with integration=tpr.
+-->
+
+<group name="tpr,anomaly_detection,">
+
+  <!-- Base TPR event - level 0 (no alert) -->
+  <rule id="100000" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="integration">tpr</field>
+    <options>no_full_log</options>
+    <description>TPR Anomaly Detection event.</description>
+  </rule>
+
+  <!-- ==================== ANOMALY DETECTION RULES ==================== -->
+
+  <!-- L1 Anomaly Detected - Base rule -->
+  <rule id="100001" level="5">
+    <if_sid>100000</if_sid>
+    <field name="tpr.event_type">anomaly</field>
+    <field name="tpr.layer">L1</field>
+    <options>no_full_log</options>
+    <description>TPR L1 Anomaly Detected - Entity $(tpr.entity_id) - Score $(tpr.anomaly_score)</description>
+    <group>tpr_anomaly,layer_l1,</group>
+  </rule>
+
+  <!-- L1 High Score Anomaly -->
+  <rule id="100002" level="7">
+    <if_sid>100001</if_sid>
+    <field name="tpr.anomaly_score" type="pcre2">0\.[1-9]|[1-9]</field>
+    <options>no_full_log</options>
+    <description>TPR L1 High-Score Anomaly - Entity $(tpr.entity_id) - Score $(tpr.anomaly_score)</description>
+    <group>tpr_anomaly,layer_l1,high_score,</group>
+  </rule>
+
+  <!-- L2 User Anomaly Detected -->
+  <rule id="100010" level="8">
+    <if_sid>100000</if_sid>
+    <field name="tpr.event_type">anomaly</field>
+    <field name="tpr.layer">L2</field>
+    <field name="tpr.l2_dimension">user</field>
+    <options>no_full_log</options>
+    <description>TPR L2 User Anomaly - Entity $(tpr.entity_id) - User $(tpr.l2_dimension_value)</description>
+    <group>tpr_anomaly,layer_l2,user_anomaly,</group>
+  </rule>
+
+  <!-- L2 Route Anomaly Detected -->
+  <rule id="100011" level="8">
+    <if_sid>100000</if_sid>
+    <field name="tpr.event_type">anomaly</field>
+    <field name="tpr.layer">L2</field>
+    <field name="tpr.l2_dimension">route</field>
+    <options>no_full_log</options>
+    <description>TPR L2 Route Anomaly - Entity $(tpr.entity_id) - Route $(tpr.l2_dimension_value)</description>
+    <group>tpr_anomaly,layer_l2,route_anomaly,</group>
+  </rule>
+
+  <!-- ==================== LLM ANALYSIS RULES ==================== -->
+
+  <!-- LLM Analysis - Normal Activity -->
+  <rule id="100020" level="3">
+    <if_sid>100000</if_sid>
+    <field name="tpr.event_type">llm_analysis</field>
+    <field name="tpr.classification">Normal Activity</field>
+    <options>no_full_log</options>
+    <description>TPR LLM Analysis - Normal Activity - Entity $(tpr.entity_id)</description>
+    <group>tpr_llm,normal_activity,</group>
+  </rule>
+
+  <!-- LLM Analysis - Suspicious Activity -->
+  <rule id="100021" level="7">
+    <if_sid>100000</if_sid>
+    <field name="tpr.event_type">llm_analysis</field>
+    <field name="tpr.classification">Suspicious</field>
+    <options>no_full_log</options>
+    <description>TPR LLM Analysis - Suspicious Activity - Entity $(tpr.entity_id) - Type: $(tpr.threat_type)</description>
+    <group>tpr_llm,suspicious_activity,</group>
+  </rule>
+
+  <!-- LLM Analysis - Likely Attack -->
+  <rule id="100022" level="12">
+    <if_sid>100000</if_sid>
+    <field name="tpr.event_type">llm_analysis</field>
+    <field name="tpr.classification">Likely Attack</field>
+    <options>no_full_log</options>
+    <description>TPR LLM Analysis - LIKELY ATTACK - Entity $(tpr.entity_id) - Type: $(tpr.threat_type)</description>
+    <mitre>
+      <id>T1190</id>
+    </mitre>
+    <group>tpr_llm,likely_attack,attack,</group>
+  </rule>
+
+  <!-- LLM Analysis - Unknown Classification (fallback) -->
+  <rule id="100029" level="5">
+    <if_sid>100000</if_sid>
+    <field name="tpr.event_type">llm_analysis</field>
+    <options>no_full_log</options>
+    <description>TPR LLM Analysis - Entity $(tpr.entity_id) - Classification: $(tpr.classification)</description>
+    <group>tpr_llm,</group>
+  </rule>
+
+</group>
