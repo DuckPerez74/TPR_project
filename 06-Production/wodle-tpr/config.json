@@ -120,6 +120,7 @@
       "entity",
       "cluster"
     ],
+    "threshold_percentile": "p99",
     "threshold_fallback": 0.1,
     "min_samples_for_detection": 10,
     "cluster_prediction": {

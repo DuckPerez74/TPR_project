@@ -19,6 +19,7 @@ class ModelLoader:
         self.kmeans_path = base_path / 'models' / f'kmeans_{observation_window}min.pkl'
 
         self.threshold_fallback = config.get('detection', {}).get('threshold_fallback', 0.01)
+        self.threshold_percentile = config.get('detection', {}).get('threshold_percentile', 'p99')
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # Lazy loading caches
@@ -74,7 +75,7 @@ class ModelLoader:
             if threshold_file.exists():
                 with open(threshold_file, 'r') as f:
                     thresholds = json.load(f)
-                    self.entity_thresholds[entity_id] = thresholds.get('p95', self.threshold_fallback)
+                    self.entity_thresholds[entity_id] = thresholds.get(self.threshold_percentile, self.threshold_fallback)
             
             return True
         except Exception as e:
@@ -109,7 +110,7 @@ class ModelLoader:
             if threshold_file.exists():
                 with open(threshold_file, 'r') as f:
                     thresholds = json.load(f)
-                    self.cluster_thresholds[cluster_id] = thresholds.get('p95', self.threshold_fallback)
+                    self.cluster_thresholds[cluster_id] = thresholds.get(self.threshold_percentile, self.threshold_fallback)
             
             return True
         except Exception as e:

@@ -194,3 +194,23 @@ models/
 ## License
 
 Internal use only.
+
+
+
+
+Opção A (20 min)
+
+(5min) Alex => Métricas (Features) 
+(5min) Diogo => Cluster (K-means) + L1 (AutoEncoder) + L2 (Isolation Forest - User/Route)
+(4min) Daniel => Pipeline (Wodle) 
+
+(5min) DEMO
+
+
+- Preparar a apresentação
+- Treinar os modelos
+- Colocar em produção
+- Simular ataques (DEMO)
+
+
+LLM 
