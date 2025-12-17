@@ -5,7 +5,6 @@ from typing import Optional, Tuple, Dict
 from .model_loader import ModelLoader
 from .window_buffer import WindowBuffer
 from .model_assignment_cache import ModelAssignmentCache
-from .voting_detector import VotingDetector
 from constants import (
     L1_FEATURE_ORDER, L2_USER_FEATURES, L2_ROUTE_FEATURES,
     L1_SCORE_MULTIPLIER, L2_NORM_INPUT_MIN, L2_NORM_INPUT_MAX
@@ -42,11 +41,6 @@ class AnomalyDetector:
         self.l1_norm_multiplier = L1_SCORE_MULTIPLIER
         self.l2_norm_min = L2_NORM_INPUT_MIN
         self.l2_norm_max = L2_NORM_INPUT_MAX
-
-        # Initialize VotingDetector for L2 user dimension
-        self.voting_detector = VotingDetector(
-            self.model_loader, opensearch_client, self._normalize_l2_score
-        )
 
 
     def _normalize_l1_score(self, mse: float, threshold: float) -> float:
@@ -255,14 +249,10 @@ class AnomalyDetector:
                 result = self._run_isolation_forest_detection(metrics_vector, model, scaler, f"user_{user_id}")
                 return result + (None,)  # Add None for voting_details
 
-            # User has no model - try voting with similar users
-            account = metrics.get('account')
-            if account and account != 'unknown':
-                # Voting detector returns 5-tuple including voting_details
-                return self.voting_detector.detect_with_voting(entity_id, user_id, account, metrics_vector)
-
-            # No account type available - skip L2 detection
-            return False, 0.0, "l2_user_no_account", None, None
+            # User has no model - skip L2 user detection
+            # This is faster and makes more sense than voting with similar users
+            # (new users don't have baseline, L1 detection still catches entity-level anomalies)
+            return False, 0.0, "l2_user_no_model_skip", None, None
 
         # Other dimensions or fallback
         else:
