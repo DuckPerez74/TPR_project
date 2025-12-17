@@ -15,9 +15,7 @@ from core import OpenSearchClient
 from data.metrics_fetcher import (
     get_unique_entities,
     fetch_entity_l1_metrics,
-    fetch_entity_l1_metrics_all_windows,
-    fetch_entity_l2_metrics,
-    fetch_entity_l2_metrics_all
+    fetch_entity_l2_metrics
 )
 from training import KMeansClusterer, ModelTrainer, IsolationForestTrainer
 from detection import ModelAssignmentCache
@@ -294,9 +292,11 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
     if train_cluster or train_l1:
         phases_to_run.append("Phase 1: K-Means Clustering")
     if train_l1 or l2_dimensions:
-        phases_to_run.append(f"Phase 2: Entity Processing ({', '.join([x for x in ['L1' if train_l1 else None] + [f'L2-{d}' for d in l2_dimensions] if x])}) - L1+L2 trained per-entity")
+        phases_to_run.append(f"Phase 2: Entity Processing ({', '.join([x for x in ['L1' if train_l1 else None] + [f'L2-{d}' for d in l2_dimensions] if x])})")
     if train_cluster:
         phases_to_run.append("Phase 3: Cluster Models")
+    if l2_dimensions:
+        phases_to_run.append(f"Phase 4: L2 Models ({', '.join(l2_dimensions)})")
 
     for phase in phases_to_run:
         print(f"  • {phase}")
@@ -453,6 +453,12 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
         n_clusters = config.get('models', {}).get('n_clusters', 3)
         cluster_data = {window: {cid: [] for cid in range(n_clusters)} for window in observation_windows}
 
+    l2_accumulated_data = {}
+    for dim in l2_dimensions:
+        l2_accumulated_data[dim] = {}
+        for window in observation_windows:
+            l2_accumulated_data[dim][window] = {}
+
     l1_entity_models_trained = {window: 0 for window in observation_windows} if train_l1 else {}
     l2_models_trained = {dim: {window: 0 for window in observation_windows} for dim in l2_dimensions}
 
@@ -513,30 +519,22 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
                     cluster_id = cluster_assignments[entity_id]
                     cluster_data[window][cluster_id].extend(samples.tolist())
 
-        # Train L2 models immediately for this entity (users belong to only 1 entity)
-        if l2_dimensions:
-            for dim in l2_dimensions:
-                for window in observation_windows:
-                    dim_metrics = l2_metrics_all.get(dim, {}).get(window, {})
+        # Accumulate L2 data for later training (PHASE 4)
+        for dim in l2_dimensions:
+            for window in observation_windows:
+                dim_metrics = l2_metrics_all.get(dim, {}).get(window, {})
 
-                    for dim_value, samples in dim_metrics.items():
-                        # Train model immediately if enough samples
-                        if len(samples) >= 50:
-                            if (entity_idx + 1) % 50 == 0 and l2_models_trained[dim][window] % 10 == 0:
-                                print(f"    ⚙ Training L2 {dim} model: {dim_value} ({window}min, {len(samples)} samples)...")
-                            model_data = l2_trainer.train_user_model(dim_value, samples)
-
-                            if model_data:
-                                dimension_models_path = models_base / f'{dim}_models' / f'{window}min'
-                                l2_trainer.save_model(model_data, dim_value, dimension_models_path)
-                                l2_models_trained[dim][window] += 1
+                for dim_value, samples in dim_metrics.items():
+                    if dim_value not in l2_accumulated_data[dim][window]:
+                        l2_accumulated_data[dim][window][dim_value] = []
+                    l2_accumulated_data[dim][window][dim_value].extend(samples.tolist())
 
     if all_entities:
         print(f"\n  Entity processing complete!")
         if train_l1:
             print(f"  L1 Entity models trained: {l1_entity_models_trained}")
         if l2_dimensions:
-            print(f"  L2 models trained: {l2_models_trained}")
+            print(f"  L2 data accumulated for dimensions: {l2_dimensions}")
 
     cluster_models_trained = {window: 0 for window in observation_windows}
 
@@ -573,8 +571,34 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
         print("PHASE 3: Cluster Model Training - SKIPPED")
         print(f"{'#'*60}")
 
-    # PHASE 4 removed - L2 models now trained immediately during PHASE 2 (per-entity)
-    # This optimization is possible because each user belongs to only one entity
+    if l2_dimensions:
+        print(f"\n{'#'*60}")
+        print("PHASE 4: L2 Dimension Model Training")
+        print(f"{'#'*60}")
+
+        for dim in l2_dimensions:
+            for window in observation_windows:
+                print(f"\n  [PHASE 4/4] Training L2 {dim} models for {window}min window...")
+
+                dimension_models_path = models_base / f'{dim}_models' / f'{window}min'
+
+                for dim_value, samples_list in l2_accumulated_data[dim][window].items():
+                    samples = np.array(samples_list)
+
+                    if len(samples) < 20:
+                        continue
+
+                    model_data = l2_trainer.train_user_model(dim_value, samples)
+
+                    if model_data:
+                        l2_trainer.save_model(model_data, dim_value, dimension_models_path)
+                        l2_models_trained[dim][window] += 1
+
+                print(f"    ✓ Trained {l2_models_trained[dim][window]} {dim} models for {window}min")
+    else:
+        print(f"\n{'#'*60}")
+        print("PHASE 4: L2 Dimension Model Training - SKIPPED")
+        print(f"{'#'*60}")
 
     print("\n" + "=" * 60)
     print("Training Complete!")
