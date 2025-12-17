@@ -2,9 +2,11 @@ import pickle
 import json
 import torch
 from pathlib import Path
+from typing import Optional, List, Dict, Tuple
 import joblib
 from training.autoencoder import AutoEncoder
 from constants import THRESHOLD_PERCENTILE, THRESHOLD_FALLBACK
+from utils.validators import sanitize_user_id
 
 
 class ModelLoader:
@@ -52,44 +54,23 @@ class ModelLoader:
             print(f"WARNING: Failed to load K-means clusterer: {str(e)}", file=sys.stderr)
             print(f"  If you recently updated the code, you may need to retrain the K-means model", file=sys.stderr)
 
-    def _load_entity_model_from_disk(self, entity_id: str):
-        """Lazy load entity model from disk"""
-        metrics_file = self.entity_models_path / f"entity_{entity_id}.pt"
-        if not metrics_file.exists():
-            return False
+    def _load_autoencoder_model(self, model_path: Path, prefix: str, identifier,
+                                 model_cache: dict, scaler_cache: dict, threshold_cache: dict = None) -> bool:
+        """
+        Generic AutoEncoder model loader (for entity and cluster models).
 
-        try:
-            checkpoint = torch.load(metrics_file, map_location=self.device)
-            model = AutoEncoder(
-                checkpoint['input_dim'],
-                checkpoint['encoding_dim'],
-                checkpoint['hidden_dim']
-            ).to(self.device)
-            model.load_state_dict(checkpoint['model_state_dict'])
-            model.eval()
-            self.entity_models[entity_id] = model
+        Args:
+            model_path: Path to model directory
+            prefix: Filename prefix (e.g., 'entity', 'cluster')
+            identifier: Model identifier (entity_id or cluster_id)
+            model_cache: Dictionary to store loaded model
+            scaler_cache: Dictionary to store loaded scaler
+            threshold_cache: Optional dictionary to store thresholds
 
-            scaler_file = self.entity_models_path / f"entity_{entity_id}_scaler.pkl"
-            if scaler_file.exists():
-                with open(scaler_file, 'rb') as f:
-                    self.entity_scalers[entity_id] = pickle.load(f)
-
-            threshold_file = self.entity_models_path / f"entity_{entity_id}_thresholds.json"
-            if threshold_file.exists():
-                with open(threshold_file, 'r') as f:
-                    thresholds = json.load(f)
-                    self.entity_thresholds[entity_id] = thresholds.get(self.threshold_percentile, self.threshold_fallback)
-            
-            return True
-        except Exception as e:
-            import sys
-            print(f"WARNING: Failed to load entity model {entity_id}: {str(e)}", file=sys.stderr)
-            return False
-
-
-    def _load_cluster_model_from_disk(self, cluster_id: int):
-        """Lazy load cluster model from disk"""
-        model_file = self.cluster_models_path / f"cluster_{cluster_id}.pt"
+        Returns:
+            True if loading succeeded, False otherwise
+        """
+        model_file = model_path / f"{prefix}_{identifier}.pt"
         if not model_file.exists():
             return False
 
@@ -102,44 +83,79 @@ class ModelLoader:
             ).to(self.device)
             model.load_state_dict(checkpoint['model_state_dict'])
             model.eval()
-            self.cluster_models[cluster_id] = model
+            model_cache[identifier] = model
 
-            scaler_file = self.cluster_models_path / f"cluster_{cluster_id}_scaler.pkl"
+            scaler_file = model_path / f"{prefix}_{identifier}_scaler.pkl"
             if scaler_file.exists():
                 with open(scaler_file, 'rb') as f:
-                    self.cluster_scalers[cluster_id] = pickle.load(f)
+                    scaler_cache[identifier] = pickle.load(f)
 
-            threshold_file = self.cluster_models_path / f"cluster_{cluster_id}_thresholds.json"
-            if threshold_file.exists():
-                with open(threshold_file, 'r') as f:
-                    thresholds = json.load(f)
-                    self.cluster_thresholds[cluster_id] = thresholds.get(self.threshold_percentile, self.threshold_fallback)
-            
+            if threshold_cache is not None:
+                threshold_file = model_path / f"{prefix}_{identifier}_thresholds.json"
+                if threshold_file.exists():
+                    with open(threshold_file, 'r') as f:
+                        thresholds = json.load(f)
+                        threshold_cache[identifier] = thresholds.get(self.threshold_percentile, self.threshold_fallback)
+
             return True
         except Exception as e:
             import sys
-            print(f"WARNING: Failed to load cluster model {cluster_id}: {str(e)}", file=sys.stderr)
+            print(f"WARNING: Failed to load {prefix} model {identifier}: {str(e)}", file=sys.stderr)
             return False
 
-    def _load_user_model_from_disk(self, user_id_safe: str):
-        """Lazy load user model from disk"""
-        model_file = self.user_models_path / f"user_{user_id_safe}.joblib"
+    def _load_entity_model_from_disk(self, entity_id: str) -> bool:
+        """Lazy load entity model from disk"""
+        return self._load_autoencoder_model(
+            self.entity_models_path, 'entity', entity_id,
+            self.entity_models, self.entity_scalers, self.entity_thresholds
+        )
+
+    def _load_cluster_model_from_disk(self, cluster_id: int) -> bool:
+        """Lazy load cluster model from disk"""
+        return self._load_autoencoder_model(
+            self.cluster_models_path, 'cluster', cluster_id,
+            self.cluster_models, self.cluster_scalers, self.cluster_thresholds
+        )
+
+    def _load_isolation_forest_model(self, model_path: Path, prefix: str, identifier: str,
+                                      model_cache: dict, scaler_cache: dict) -> bool:
+        """
+        Generic Isolation Forest model loader (for user and route models).
+
+        Args:
+            model_path: Path to model directory
+            prefix: Filename prefix (e.g., 'user')
+            identifier: Model identifier (user_id or route_id)
+            model_cache: Dictionary to store loaded model
+            scaler_cache: Dictionary to store loaded scaler
+
+        Returns:
+            True if loading succeeded, False otherwise
+        """
+        model_file = model_path / f"{prefix}_{identifier}.joblib"
         if not model_file.exists():
             return False
 
         try:
             model = joblib.load(model_file)
-            self.user_models[user_id_safe] = model
+            model_cache[identifier] = model
 
-            scaler_file = self.user_models_path / f"user_{user_id_safe}_scaler.joblib"
+            scaler_file = model_path / f"{prefix}_{identifier}_scaler.joblib"
             if scaler_file.exists():
-                self.user_scalers[user_id_safe] = joblib.load(scaler_file)
-            
+                scaler_cache[identifier] = joblib.load(scaler_file)
+
             return True
         except Exception as e:
             import sys
-            print(f"WARNING: Failed to load user model {user_id_safe}: {str(e)}", file=sys.stderr)
+            print(f"WARNING: Failed to load {prefix} model {identifier}: {str(e)}", file=sys.stderr)
             return False
+
+    def _load_user_model_from_disk(self, user_id_safe: str) -> bool:
+        """Lazy load user model from disk"""
+        return self._load_isolation_forest_model(
+            self.user_models_path, 'user', user_id_safe,
+            self.user_models, self.user_scalers
+        )
 
     def get_entity_model(self, entity_id: str):
         if entity_id not in self.entity_models:
@@ -180,19 +196,19 @@ class ModelLoader:
         return (self.entity_models_path / f"entity_{entity_id}.pt").exists()
 
     def get_user_model(self, user_id: str):
-        # We need to sanitize the input user_id to match the file storage convention
-        safe_user_id = "".join([c if c.isalnum() else "_" for c in user_id])
+        # Sanitize user_id to match file storage convention
+        safe_user_id = sanitize_user_id(user_id)
         if safe_user_id not in self.user_models:
             self._load_user_model_from_disk(safe_user_id)
         return self.user_models.get(safe_user_id)
 
     def get_user_scaler(self, user_id: str):
-        safe_user_id = "".join([c if c.isalnum() else "_" for c in user_id])
+        safe_user_id = sanitize_user_id(user_id)
         if safe_user_id not in self.user_scalers:
             self._load_user_model_from_disk(safe_user_id)
         return self.user_scalers.get(safe_user_id)
 
-    def get_available_clusters(self) -> list:
+    def get_available_clusters(self) -> List[int]:
         # Scan directory for active clusters
         if not self.cluster_models_path.exists():
             return []

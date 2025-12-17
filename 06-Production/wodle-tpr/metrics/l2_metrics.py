@@ -4,6 +4,7 @@ from functools import lru_cache
 from .base import MetricsCalculator
 from utils.metrics_helpers import calculate_entropy
 from utils.geo_helpers import GeoIPHelper, haversine_distance
+from utils.behavioral_metrics import BehavioralMetrics
 from constants import VELOCITY_IMPOSSIBILITY_KMH, MODIFICATION_METHODS
 
 class L2MetricsCalculator(MetricsCalculator):
@@ -14,27 +15,18 @@ class L2MetricsCalculator(MetricsCalculator):
         self.dimensions = l2_config.get('dimensions', ['user', 'route'])
         self.max_dimension_value_length = 512
 
-        # Load keywords from config (these are customizable per deployment)
-        keywords = l2_config.get('keywords', {})
-        self.admin_keywords = keywords.get('admin_endpoints', 'admin|config|setup|root|dashboard')
-        self.sensitive_keywords = keywords.get('sensitive_data', 'billing|finance|salary|payments|cpf|nif|ssn|credit_card')
-        self.backup_keywords = keywords.get('backup_files', 'backup|dump|archive|tar.gz|zip|sql')
-        self.export_keywords = keywords.get('export_operations', 'export|download|report|csv|xlsx')
-        self.bulk_keywords = keywords.get('bulk_operations', 'batch|bulk|multi')
-
         # Load thresholds from config (customizable per deployment)
         thresholds = l2_config.get('thresholds', {})
-        self.working_hours_start = thresholds.get('working_hours_start', 8)
-        self.working_hours_end = thresholds.get('working_hours_end', 19)
         self.unusual_account_threshold = thresholds.get('unusual_account_threshold_pct', 5.0)
 
         # Use constants for fixed technical values
         self.velocity_impossibility_kmh = VELOCITY_IMPOSSIBILITY_KMH
-        self.modification_methods = MODIFICATION_METHODS
 
         # Load account types from config (customizable per deployment)
         self.account_types = l2_config.get('account_types', ['admin', 'manager', 'technician'])
 
+        # Initialize Behavioral Metrics Calculator (shared logic)
+        self.behavioral_metrics = BehavioralMetrics(config)
 
         # Initialize GeoIP Helper
         self.geo_helper = GeoIPHelper()
@@ -184,33 +176,8 @@ class L2MetricsCalculator(MetricsCalculator):
         total = len(df)
         if total == 0: return metrics
 
-        # Ensure string columns
-        urls = df['data.route_uri'].astype(str).fillna("") if 'data.route_uri' in df.columns else pd.Series([""] * total)
-        methods = df['data.method'].astype(str).fillna("") if 'data.method' in df.columns else pd.Series([""] * total)
-        
-        # 1. Privilege Endpoint Ratio
-        metrics['privilege_endpoint_ratio'] = urls.str.contains(self.admin_keywords, case=False).sum() / total
-
-        # 2. Sensitive Data Access
-        metrics['sensitive_data_access_rate'] = urls.str.contains(self.sensitive_keywords, case=False).sum() / total
-
-        # 5. Config Modification Attempts
-        config_mods = (methods.isin(self.modification_methods)) & (urls.str.contains('config|setting', case=False))
-        metrics['config_modification_attempts'] = config_mods.sum()
-
-        # 6. Backup Access
-        metrics['backup_access_indicator'] = urls.str.contains(self.backup_keywords, case=False).sum()
-
-        # 7. Export Usage
-        metrics['export_endpoint_usage'] = urls.str.contains(self.export_keywords, case=False).sum()
-
-        # 9. Bulk Operation
-        metrics['bulk_operation_ratio'] = urls.str.contains(self.bulk_keywords, case=False).sum()
-
-        # 10. Working Hours Deviation
-        if '@timestamp' in df.columns:
-            log_hours = pd.to_datetime(df['@timestamp']).dt.hour
-            metrics['working_hours_deviation'] = len(df[~log_hours.between(self.working_hours_start, self.working_hours_end)]) / total
+        # Calculate shared behavioral metrics
+        metrics.update(self.behavioral_metrics.calculate(df))
 
         # 13. Velocity Impossibility (User Dimension)
         metrics['velocity_impossibility'] = 0
@@ -270,37 +237,10 @@ class L2MetricsCalculator(MetricsCalculator):
         total = len(df)
         if total == 0: return metrics
 
-        # Ensure string columns
-        urls = df['data.route_uri'].astype(str).fillna("") if 'data.route_uri' in df.columns else pd.Series([""] * total)
-        methods = df['data.method'].astype(str).fillna("") if 'data.method' in df.columns else pd.Series([""] * total)
+        # Calculate shared behavioral metrics
+        metrics.update(self.behavioral_metrics.calculate(df))
 
-        # --- Behavioral Metrics (Ported for IP Dimension) ---
-        
-        # 1. Privilege Endpoint Ratio
-        metrics['privilege_endpoint_ratio'] = urls.str.contains(self.admin_keywords, case=False).sum() / total
-
-        # 2. Sensitive Data Access
-        metrics['sensitive_data_access_rate'] = urls.str.contains(self.sensitive_keywords, case=False).sum() / total
-
-        # 5. Config Modification Attempts
-        config_mods = (methods.isin(self.modification_methods)) & (urls.str.contains('config|setting', case=False))
-        metrics['config_modification_attempts'] = config_mods.sum()
-
-        # 6. Backup Access
-        metrics['backup_access_indicator'] = urls.str.contains(self.backup_keywords, case=False).sum()
-
-        # 7. Export Usage
-        metrics['export_endpoint_usage'] = urls.str.contains(self.export_keywords, case=False).sum()
-
-        # 9. Bulk Operation
-        metrics['bulk_operation_ratio'] = urls.str.contains(self.bulk_keywords, case=False).sum()
-
-        # 10. Working Hours Deviation
-        if '@timestamp' in df.columns:
-            log_hours = pd.to_datetime(df['@timestamp']).dt.hour
-            metrics['working_hours_deviation'] = len(df[~log_hours.between(self.working_hours_start, self.working_hours_end)]) / total
-
-        # --- Base IP Metrics ---
+        # --- IP-Specific Metrics ---
 
         if 'data.operator_or_user_id' in df.columns:
             metrics['unique_users'] = df['data.operator_or_user_id'].nunique()

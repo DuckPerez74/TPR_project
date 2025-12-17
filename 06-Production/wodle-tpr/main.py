@@ -78,83 +78,23 @@ def process_entity(entity_id: str, entity_df, current_time: datetime,
                    scheduler, l1_calc, l2_calc, storage, detector, analyzer, logger,
                    detection_enabled: bool, shutdown_flag, llm_analyzer=None,
                    scheduling_minute: int = None):
+    """
+    Process entity using EntityProcessor class.
 
-    if shutdown_flag.should_continue() is False:
-        return False
+    This function is now a thin wrapper around EntityProcessor.process()
+    for backward compatibility with the existing main loop.
+    """
+    from core.entity_processor import EntityProcessor
 
-    l1_metrics_by_window = {}
-    l2_metrics_by_window = {}
-    current_minute = scheduling_minute if scheduling_minute is not None else current_time.minute
+    processor = EntityProcessor(
+        scheduler, l1_calc, l2_calc, storage, detector,
+        analyzer, logger, llm_analyzer
+    )
 
-    window_data = {}
-    for window in [60, 30, 10]:
-        start_time, end_time = get_time_range(current_time, window)
-        window_df = entity_df[(entity_df['@timestamp'] >= start_time) &
-                             (entity_df['@timestamp'] < end_time)]
-        if not window_df.empty:
-            window_data[window] = window_df
-
-    for window in [60, 30, 10]:
-        if shutdown_flag.should_continue() is False:
-            break
-
-        window_df = window_data.get(window)
-        if window_df is None:
-            continue
-
-        try:
-            l1_metrics = l1_calc.calculate(window_df, window)
-            l1_metrics_by_window[window] = l1_metrics
-
-            if scheduler.should_save_metrics('L1', window, current_minute):
-                storage.save_l1_metrics(entity_id, current_time, window, l1_metrics)
-        except (ValueError, TypeError, KeyError) as e:
-            logger.log_error(f"L1 metrics calculation failed for entity {entity_id}, window {window}", e)
-            continue
-
-        l2_enabled = l1_calc.config.get('metrics', {}).get('layers', {}).get('L2', {}).get('enabled', False)
-        if l2_enabled:
-            try:
-                l2_results = []
-                for dimension in l2_calc.dimensions:
-                    dim_results = l2_calc.calculate(window_df, dimension)
-                    l2_results.extend(dim_results)
-
-                l2_metrics_by_window[window] = l2_results
-
-                if scheduler.should_save_metrics('L2', window, current_minute):
-                    storage.save_l2_metrics(entity_id, current_time, window, l2_results)
-            except (ValueError, TypeError, KeyError) as e:
-                logger.log_error(f"L2 metrics calculation failed for entity {entity_id}, window {window}", e)
-
-    if not detection_enabled:
-        return False
-
-    if 60 not in l1_metrics_by_window and 60 not in l2_metrics_by_window:
-        return False
-
-    try:
-        result = analyzer.analyze(detector, entity_id, l1_metrics_by_window, l2_metrics_by_window)
-
-        if result is not None:
-            alert_id = logger.log_anomaly_alert(entity_id, result)
-
-            if llm_analyzer and llm_analyzer.should_analyze(result):
-                try:
-                    # Use the configured trigger window for metrics
-                    trigger_window = llm_analyzer.trigger_window
-                    metrics = l1_metrics_by_window.get(trigger_window, l1_metrics_by_window.get(30, l1_metrics_by_window.get(60, {})))
-                    llm_result = llm_analyzer.analyze(entity_id, result, metrics, entity_df)
-                    if llm_result and not llm_result.get('error'):
-                        logger.log_llm_analysis(entity_id, llm_result, alert_id)
-                except Exception as e:
-                    logger.log_error(f"LLM analysis failed for entity {entity_id}", e)
-
-            return True
-    except (RuntimeError, ValueError, KeyError) as e:
-        logger.log_error(f"Anomaly detection failed for entity {entity_id}", e)
-
-    return False
+    return processor.process(
+        entity_id, entity_df, current_time,
+        shutdown_flag, detection_enabled, scheduling_minute
+    )
 
 
 def main():

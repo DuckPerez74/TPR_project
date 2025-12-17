@@ -1,13 +1,11 @@
 import pandas as pd
-import re
 from datetime import datetime
+from utils.validators import EntityValidator
 
 
 class DataPreprocessor:
     def __init__(self, config: dict):
         self.company_id_field = config.get('indices', {}).get('raw_logs', {}).get('company_id_field', 'data.entities')
-        self.entity_id_pattern = re.compile(r'^[a-zA-Z0-9_\-\.]+$')
-        self.max_entity_id_length = 256
 
     def prepare(self, df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
@@ -38,13 +36,8 @@ class DataPreprocessor:
         return [e for e in entities if self._is_valid_entity_id(e)]
 
     def _is_valid_entity_id(self, entity_id: str) -> bool:
-        if not isinstance(entity_id, str):
-            return False
-        if len(entity_id) == 0 or len(entity_id) > self.max_entity_id_length:
-            return False
-        if not self.entity_id_pattern.match(entity_id):
-            return False
-        return True
+        """Validate entity_id using centralized validator."""
+        return EntityValidator.is_valid(entity_id)
 
     def filter_by_entity(self, df: pd.DataFrame, entity_id: str) -> pd.DataFrame:
         if df.empty or self.company_id_field not in df.columns:

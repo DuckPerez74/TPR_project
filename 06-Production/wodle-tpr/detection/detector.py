@@ -1,9 +1,11 @@
 import numpy as np
 import torch
 from pathlib import Path
+from typing import Optional, Tuple, Dict
 from .model_loader import ModelLoader
 from .window_buffer import WindowBuffer
 from .model_assignment_cache import ModelAssignmentCache
+from .voting_detector import VotingDetector
 from constants import (
     L1_FEATURE_ORDER, L2_USER_FEATURES, L2_ROUTE_FEATURES,
     L1_SCORE_MULTIPLIER, L2_NORM_INPUT_MIN, L2_NORM_INPUT_MAX
@@ -34,11 +36,17 @@ class AnomalyDetector:
         else:
             self.window_buffer = None
             self.assignment_cache = None
+            opensearch_client = None
 
         # Use constants for score normalization (ML-tuned values)
         self.l1_norm_multiplier = L1_SCORE_MULTIPLIER
         self.l2_norm_min = L2_NORM_INPUT_MIN
         self.l2_norm_max = L2_NORM_INPUT_MAX
+
+        # Initialize VotingDetector for L2 user dimension
+        self.voting_detector = VotingDetector(
+            self.model_loader, opensearch_client, self._normalize_l2_score
+        )
 
 
     def _normalize_l1_score(self, mse: float, threshold: float) -> float:
@@ -60,7 +68,7 @@ class AnomalyDetector:
             return min(1.0, max(0.0, score))
         return min(1.0, max(0.0, (score - self.l2_norm_min) / range_size))
 
-    def detect(self, entity_id: str, metrics: dict, layer: str, **kwargs) -> tuple:
+    def detect(self, entity_id: str, metrics: dict, layer: str, **kwargs) -> tuple[bool, float, Optional[str], Optional[int]]:
         dimension = kwargs.get('dimension')
         metrics_vector = self._metrics_to_vector(metrics, layer, dimension)
 
@@ -245,7 +253,7 @@ class AnomalyDetector:
             # User has no model - try voting with similar users
             account = metrics.get('account')
             if account and account != 'unknown':
-                return self._detect_l2_with_voting(entity_id, user_id, account, metrics_vector)
+                return self.voting_detector.detect_with_voting(entity_id, user_id, account, metrics_vector)
 
             # No account type available - skip L2 detection
             return False, 0.0, None, None
@@ -276,149 +284,6 @@ class AnomalyDetector:
             print(f"WARNING: Isolation Forest detection failed for {identifier}: {str(e)}", file=sys.stderr)
             return False, 0.0, None, None
 
-    def _find_similar_users_models(self, entity_id: str, exclude_user_id: str, account: str):
-        """
-        Find models of similar users (same entity + same account).
-
-        Args:
-            entity_id: Entity ID to search within
-            exclude_user_id: User ID to exclude (the current user without model)
-            account: Account to match (admin, manager, technician, etc.)
-
-        Returns:
-            List of tuples (user_id, model, scaler) for similar users with models
-        """
-        import sys
-        from pathlib import Path
-
-        similar_models = []
-
-        # Get all user model files
-        user_models_path = self.model_loader.user_models_path
-        if not user_models_path.exists():
-            return similar_models
-
-        # We need to check user metadata to find users from same entity with same account type
-        # This would ideally be stored in a metadata file or database
-        # For now, we'll use a naming convention or try to query historical metrics
-
-        # APPROACH: Query historical L2 metrics for users in this entity with this account type
-        if self.window_buffer is None or self.window_buffer.client is None:
-            return similar_models
-
-        try:
-            import pandas as pd
-
-            # Query recent L2 user metrics for this entity
-            end_date = pd.Timestamp.utcnow()
-            start_date = end_date - pd.Timedelta(days=7)
-
-            query = {
-                "size": 100,
-                "_source": ["dimension_value", "metrics.account"],
-                "query": {
-                    "bool": {
-                        "filter": [
-                            {"term": {"entity_id.keyword": entity_id}},
-                            {"term": {"layer.keyword": "L2"}},
-                            {"term": {"dimension.keyword": "user"}},
-                            {"term": {"metrics.account.keyword": account}},
-                            {
-                                "range": {
-                                    "@timestamp": {
-                                        "gte": start_date.isoformat(),
-                                        "lt": end_date.isoformat()
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                },
-                "collapse": {
-                    "field": "dimension_value.keyword"
-                }
-            }
-
-            response = self.window_buffer.client.search(index="metrics-tpr*", body=query, ignore_unavailable=True)
-            hits = response.get('hits', {}).get('hits', [])
-
-            for hit in hits:
-                user_id = hit.get('_source', {}).get('dimension_value')
-                if user_id and user_id != exclude_user_id:
-                    # Check if this user has a model
-                    model = self.model_loader.get_user_model(user_id)
-                    scaler = self.model_loader.get_user_scaler(user_id)
-
-                    if model is not None and scaler is not None:
-                        similar_models.append((user_id, model, scaler))
-
-            if similar_models:
-                print(f"[Detector] Found {len(similar_models)} similar users with models "
-                      f"(entity={entity_id}, account={account})",
-                      file=sys.stderr)
-
-        except Exception as e:
-            print(f"WARNING: Failed to find similar users: {str(e)}", file=sys.stderr)
-
-        return similar_models
-
-    def _detect_l2_with_voting(self, entity_id: str, user_id: str,
-                               account: str, metrics_vector: np.ndarray) -> tuple:
-        """
-        Detect anomaly using voting from similar users' models.
-
-        Args:
-            entity_id: Entity ID
-            user_id: User ID without own model
-            account: Account of the user
-            metrics_vector: Metrics vector to evaluate
-
-        Returns:
-            Tuple (is_anomaly, score, model_used, cluster_id)
-        """
-        import sys
-
-        # Find similar users with models
-        similar_users = self._find_similar_users_models(entity_id, user_id, account)
-
-        if not similar_users:
-            # No similar users found - skip L2 detection
-            return False, 0.0, None, None
-
-        # Run detection with each similar user's model
-        scores = []
-
-        for similar_user_id, model, scaler in similar_users:
-            try:
-                X_scaled = scaler.transform(metrics_vector)
-                score = model.decision_function(X_scaled)[0]
-                scores.append(-score)  # Invert: higher = more anomalous
-
-            except Exception as e:
-                print(f"WARNING: Scoring failed for similar user {similar_user_id}: {str(e)}", file=sys.stderr)
-                continue
-
-        # Minimum voters and average score threshold
-        min_voters = 2
-        avg_score_threshold = 0.4  # 40% normalized score
-
-        if len(scores) < min_voters:
-            # Not enough models to make a decision
-            return False, 0.0, None, None
-
-        avg_score = sum(scores) / len(scores)
-        normalized_score = self._normalize_l2_score(avg_score)
-        
-        # Use average score instead of voting
-        is_anomaly = normalized_score > avg_score_threshold
-
-        model_info = f"user_avg_score_{len(scores)}models"
-
-        print(f"[Detector] User {user_id} avg score: {normalized_score:.2f} "
-              f"(threshold={avg_score_threshold}, is_anomaly={is_anomaly})",
-              file=sys.stderr)
-
-        return is_anomaly, float(normalized_score), model_info, None
 
     def _metrics_to_vector(self, metrics: dict, layer: str, dimension: str = None) -> np.ndarray:
         if layer == 'L1':

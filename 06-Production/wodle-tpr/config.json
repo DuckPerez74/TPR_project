@@ -140,7 +140,7 @@
     "enable_file_logging": true
   },
   "performance": {
-    "max_execution_time_seconds": 600,
+    "max_execution_time_seconds": 1200,
     "batch_size": 10000,
     "max_logs_per_fetch": 100000
   },

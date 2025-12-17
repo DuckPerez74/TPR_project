@@ -26,46 +26,46 @@ class HierarchicalAnalyzer:
         if not self.hierarchical_drill_down:
             return None
 
-        results_60 = self._evaluate_window(detector, entity_id, 60,
-                                           l1_metrics_by_window.get(60),
-                                           l2_metrics_by_window.get(60))
+        result_60min = self._evaluate_window(detector, entity_id, 60,
+                                             l1_metrics_by_window.get(60),
+                                             l2_metrics_by_window.get(60))
 
         # Risk matrix enabled: Use composite scoring
         if self.use_risk_matrix:
             # Check if 60min window warrants drill-down based on risk score
-            risk_score_60 = self._calculate_risk_score(results_60)
+            risk_score_60min = self._calculate_risk_score(result_60min)
 
-            if risk_score_60 < self.risk_threshold:
+            if risk_score_60min < self.risk_threshold:
                 # Risk too low, no alert
                 return None
         else:
             # Fallback: Simple threshold filter
-            if not results_60['has_anomaly'] or results_60['score'] < self.min_score_for_alert:
+            if not result_60min['has_anomaly'] or result_60min['score'] < self.min_score_for_alert:
                 return None
 
         # Drill down to smaller windows
-        results_30 = self._evaluate_window(detector, entity_id, 30,
-                                           l1_metrics_by_window.get(30),
-                                           l2_metrics_by_window.get(30))
+        result_30min = self._evaluate_window(detector, entity_id, 30,
+                                             l1_metrics_by_window.get(30),
+                                             l2_metrics_by_window.get(30))
 
-        results_10 = self._evaluate_window(detector, entity_id, 10,
-                                           l1_metrics_by_window.get(10),
-                                           l2_metrics_by_window.get(10))
+        result_10min = self._evaluate_window(detector, entity_id, 10,
+                                             l1_metrics_by_window.get(10),
+                                             l2_metrics_by_window.get(10))
 
         # Select smallest window based on risk matrix or simple anomaly
         if self.use_risk_matrix:
-            selected_window, final_risk_score = self._select_window_by_risk(results_60, results_30, results_10)
+            selected_window, final_risk_score = self._select_window_by_risk(result_60min, result_30min, result_10min)
         else:
-            selected_window = self._select_smallest_anomalous_window(results_60, results_30, results_10)
+            selected_window = self._select_smallest_anomalous_window(result_60min, result_30min, result_10min)
             final_risk_score = None
 
         result = {
             'entity_id': entity_id,
             'selected_window': selected_window,
             'results': {
-                '60': results_60,
-                '30': results_30,
-                '10': results_10
+                '60': result_60min,
+                '30': result_30min,
+                '10': result_10min
             },
             'timestamp': datetime.utcnow().isoformat()
         }
@@ -194,23 +194,23 @@ class HierarchicalAnalyzer:
 
         return risk_score
 
-    def _select_window_by_risk(self, r60: dict, r30: dict, r10: dict) -> tuple:
+    def _select_window_by_risk(self, result_60min: dict, result_30min: dict, result_10min: dict) -> tuple:
         """
         Select window with highest risk score.
 
         Args:
-            r60, r30, r10: Window results
+            result_60min, result_30min, result_10min: Window results
 
         Returns:
             Tuple (selected_window, risk_score)
         """
-        risk_60 = self._calculate_risk_score(r60)
-        risk_30 = self._calculate_risk_score(r30)
-        risk_10 = self._calculate_risk_score(r10)
+        risk_60min = self._calculate_risk_score(result_60min)
+        risk_30min = self._calculate_risk_score(result_30min)
+        risk_10min = self._calculate_risk_score(result_10min)
 
         # Select window with highest risk that exceeds threshold
-        risks = [(10, risk_10), (30, risk_30), (60, risk_60)]
-        risks_above_threshold = [(w, r) for w, r in risks if r >= self.risk_threshold]
+        risks = [(10, risk_10min), (30, risk_30min), (60, risk_60min)]
+        risks_above_threshold = [(window, risk) for window, risk in risks if risk >= self.risk_threshold]
 
         if risks_above_threshold:
             # Pick smallest window with risk >= threshold
@@ -249,10 +249,11 @@ class HierarchicalAnalyzer:
             'l2_route_weighted': round(l2_route_score * self.risk_weights['l2_route'], 6)
         }
 
-    def _select_smallest_anomalous_window(self, r60: dict, r30: dict, r10: dict) -> int:
-        if r10['has_anomaly']:
+    def _select_smallest_anomalous_window(self, result_60min: dict, result_30min: dict, result_10min: dict) -> int:
+        """Select smallest window that has an anomaly."""
+        if result_10min['has_anomaly']:
             return 10
-        elif r30['has_anomaly']:
+        elif result_30min['has_anomaly']:
             return 30
         else:
             return 60
