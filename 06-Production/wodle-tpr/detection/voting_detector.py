@@ -37,7 +37,7 @@ class VotingDetector:
         self.avg_score_threshold = 0.4  # 40% normalized score threshold
 
     def detect_with_voting(self, entity_id: str, user_id: str, account: str,
-                           metrics_vector: np.ndarray) -> Tuple[bool, float, Optional[str], None]:
+                           metrics_vector: np.ndarray) -> Tuple[bool, float, str, None, Optional[dict]]:
         """
         Detect anomaly using voting from similar users' models.
 
@@ -48,23 +48,28 @@ class VotingDetector:
             metrics_vector: Metrics vector to evaluate
 
         Returns:
-            Tuple (is_anomaly, score, model_used, cluster_id)
+            Tuple (is_anomaly, score, model_used, cluster_id, voting_details)
+            voting_details is a dict with 'voters' and 'scores' when voting is used
         """
         # Find similar users with models
         similar_users = self._find_similar_users_models(entity_id, user_id, account)
 
         if not similar_users:
             # No similar users found - skip L2 detection
-            return False, 0.0, None, None
+            return False, 0.0, "voting_no_similar_users", None, None
 
         # Run detection with each similar user's model
         scores = []
+        voter_ids = []
 
         for similar_user_id, model, scaler in similar_users:
             try:
                 X_scaled = scaler.transform(metrics_vector)
                 score = model.decision_function(X_scaled)[0]
-                scores.append(-score)  # Invert: higher = more anomalous
+                inverted_score = -score  # Invert: higher = more anomalous
+                
+                scores.append(inverted_score)
+                voter_ids.append(similar_user_id)
 
             except Exception as e:
                 print(f"WARNING: Scoring failed for similar user {similar_user_id}: {str(e)}", file=sys.stderr)
@@ -72,7 +77,7 @@ class VotingDetector:
 
         if len(scores) < self.min_voters:
             # Not enough models to make a decision
-            return False, 0.0, None, None
+            return False, 0.0, "voting_insufficient_voters", None, None
 
         avg_score = sum(scores) / len(scores)
         normalized_score = self.normalize_score(avg_score)
@@ -80,13 +85,26 @@ class VotingDetector:
         # Use average score instead of voting
         is_anomaly = normalized_score > self.avg_score_threshold
 
-        model_info = f"user_avg_score_{len(scores)}models"
+        model_info = f"voting_{len(scores)}users"
 
+        # Build voting details for logging
+        voting_details = {
+            'voters': voter_ids,
+            'raw_scores': scores,
+            'normalized_scores': [self.normalize_score(s) for s in scores]
+        }
+
+        # Enhanced stderr logging with voter details
+        print(f"[VotingDetector] User {user_id} voting details:", file=sys.stderr)
+        for voter, norm_score in zip(voter_ids[:10], voting_details['normalized_scores'][:10]):
+            print(f"  - {voter}: {norm_score:.4f}", file=sys.stderr)
+        if len(voter_ids) > 10:
+            print(f"  ... and {len(voter_ids) - 10} more voters", file=sys.stderr)
         print(f"[VotingDetector] User {user_id} avg score: {normalized_score:.2f} "
               f"(threshold={self.avg_score_threshold}, is_anomaly={is_anomaly})",
               file=sys.stderr)
 
-        return is_anomaly, float(normalized_score), model_info, None
+        return is_anomaly, float(normalized_score), model_info, None, voting_details
 
     def _find_similar_users_models(self, entity_id: str, exclude_user_id: str,
                                     account: str) -> List[Tuple[str, object, object]]:

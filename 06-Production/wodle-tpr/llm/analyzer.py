@@ -124,26 +124,35 @@ class LLMAnalyzer:
         self._daily_calls += 1
 
     def should_analyze(self, anomaly_result: dict) -> bool:
+        # DEBUG: Always log when this is called
+        entity_id = anomaly_result.get('entity_id', 'unknown') if anomaly_result else 'none'
+        self.logger.info(f"LLM should_analyze called for entity {entity_id}")
+
         if not self.enabled:
+            self.logger.info(f"LLM disabled, skipping entity {entity_id}")
             return False
 
         if not anomaly_result:
             return False
 
         selected_window = anomaly_result.get('selected_window', 60)
-        if selected_window != self.trigger_window:
-            return False
-
-        # Check risk_score threshold (default: 60% = 0.6)
-        min_risk_score = self.config.get('min_risk_score_for_analysis', 0.6)
         risk_score = anomaly_result.get('risk_score', 0.0)
-        
-        if risk_score < min_risk_score:
-            self.logger.debug(
-                f"Skipping LLM analysis: risk_score {risk_score:.2%} < threshold {min_risk_score:.2%}"
-            )
+        min_risk_score = self.config.get('min_risk_score_for_analysis', 0.6)
+
+        self.logger.info(
+            f"LLM check for entity {entity_id}: window={selected_window} (need {self.trigger_window}), "
+            f"risk={risk_score:.2%} (need >={min_risk_score:.2%})"
+        )
+
+        if selected_window != self.trigger_window:
+            self.logger.info(f"LLM skipped for entity {entity_id}: window mismatch")
             return False
 
+        if risk_score < min_risk_score:
+            self.logger.info(f"LLM skipped for entity {entity_id}: risk too low")
+            return False
+
+        self.logger.info(f"LLM TRIGGERED for entity {entity_id}!")
         return True
 
     def analyze(self, entity_id: str, anomaly_result: dict,

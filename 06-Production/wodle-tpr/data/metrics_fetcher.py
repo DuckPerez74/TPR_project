@@ -102,7 +102,8 @@ def fetch_entity_l1_metrics_all_windows(client, index_name, entity_id, start_dat
         hits = response['hits']['hits']
         all_docs.extend(hits)
 
-        while hits and len(all_docs) < 100000:
+        # Fetch ALL documents without limit to ensure complete data collection
+        while hits:
             response = client.scroll(scroll_id=scroll_id, scroll='2m')
             hits = response['hits']['hits']
             all_docs.extend(hits)
@@ -180,7 +181,8 @@ def fetch_entity_l1_metrics(client, index_name, entity_id, start_date, end_date,
         hits = response['hits']['hits']
         all_docs.extend(hits)
 
-        while hits and len(all_docs) < 100000:
+        # Fetch ALL documents without limit to ensure complete data collection
+        while hits:
             response = client.scroll(scroll_id=scroll_id, scroll='2m')
             hits = response['hits']['hits']
             all_docs.extend(hits)
@@ -250,7 +252,8 @@ def fetch_entity_l2_metrics_all(client, index_name, entity_id, start_date, end_d
         hits = response['hits']['hits']
         all_docs.extend(hits)
 
-        while hits and len(all_docs) < 100000:
+        # Fetch ALL documents without limit to ensure complete data collection
+        while hits:
             response = client.scroll(scroll_id=scroll_id, scroll='2m')
             hits = response['hits']['hits']
             all_docs.extend(hits)
@@ -349,7 +352,8 @@ def fetch_entity_l2_metrics(client, index_name, entity_id, start_date, end_date,
         hits = response['hits']['hits']
         all_docs.extend(hits)
 
-        while hits and len(all_docs) < 100000:
+        # Fetch ALL documents without limit to ensure complete data collection
+        while hits:
             response = client.scroll(scroll_id=scroll_id, scroll='2m')
             hits = response['hits']['hits']
             all_docs.extend(hits)

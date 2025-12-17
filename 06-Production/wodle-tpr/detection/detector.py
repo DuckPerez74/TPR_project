@@ -68,23 +68,26 @@ class AnomalyDetector:
             return min(1.0, max(0.0, score))
         return min(1.0, max(0.0, (score - self.l2_norm_min) / range_size))
 
-    def detect(self, entity_id: str, metrics: dict, layer: str, **kwargs) -> tuple[bool, float, Optional[str], Optional[int]]:
+    def detect(self, entity_id: str, metrics: dict, layer: str, **kwargs) -> tuple[bool, float, str, Optional[int], Optional[dict]]:
+        """Detect anomalies. Returns (is_anomaly, score, model_used, cluster_id, voting_details)."""
         dimension = kwargs.get('dimension')
         metrics_vector = self._metrics_to_vector(metrics, layer, dimension)
 
         if metrics_vector is None:
-            return False, 0.0, None, None
+            return False, 0.0, "invalid_metrics_vector", None, None
 
         if layer == 'L1':
             if self.model_loader.has_entity_model(entity_id):
-                return self._detect_with_entity_model(entity_id, metrics_vector)
+                result = self._detect_with_entity_model(entity_id, metrics_vector)
+                return result + (None,)  # Add None for voting_details
             else:
-                return self._detect_with_cluster_model(entity_id, metrics_vector)
+                result = self._detect_with_cluster_model(entity_id, metrics_vector)
+                return result + (None,)  # Add None for voting_details
         elif layer == 'L2':
             dimension_value = kwargs.get('dimension_value')
             return self._detect_l2_simple(entity_id, metrics_vector, metrics, dimension_value, dimension)
         else:
-            return False, 0.0, None, None
+            return False, 0.0, "unknown_layer", None, None
 
     def _detect_with_entity_model(self, entity_id: str, metrics_vector: np.ndarray) -> tuple:
         model = self.model_loader.get_entity_model(entity_id)
@@ -92,7 +95,7 @@ class AnomalyDetector:
         threshold = self.model_loader.get_entity_threshold(entity_id)
 
         if model is None or scaler is None:
-            return False, 0.0, None, None
+            return False, 0.0, "entity_model_not_found", None
 
         try:
             X_scaled = scaler.transform(metrics_vector)
@@ -109,7 +112,7 @@ class AnomalyDetector:
         except (ValueError, TypeError, RuntimeError) as e:
             import sys
             print(f"WARNING: Entity model detection failed for {entity_id}: {str(e)}", file=sys.stderr)
-            return False, 0.0, None, None
+            return False, 0.0, "entity_model_error", None
 
     def _detect_with_cluster_model(self, entity_id: str, metrics_vector: np.ndarray) -> tuple:
         # Check assignment cache FIRST (optimization)
@@ -132,14 +135,14 @@ class AnomalyDetector:
             cluster_id = self._determine_cluster(entity_id, metrics_vector)
 
         if cluster_id is None:
-            return False, 0.0, None, None
+            return False, 0.0, "cluster_not_determined", None
 
         model = self.model_loader.get_cluster_model(cluster_id)
         scaler = self.model_loader.get_cluster_scaler(cluster_id)
         threshold = self.model_loader.get_cluster_threshold(cluster_id)
 
         if model is None or scaler is None:
-            return False, 0.0, None, None
+            return False, 0.0, "cluster_model_not_found", None
 
         try:
             X_scaled = scaler.transform(metrics_vector)
@@ -156,7 +159,7 @@ class AnomalyDetector:
         except (ValueError, TypeError, RuntimeError) as e:
             import sys
             print(f"WARNING: Cluster model detection failed for entity {entity_id}, cluster {cluster_id}: {str(e)}", file=sys.stderr)
-            return False, 0.0, None, None
+            return False, 0.0, "cluster_model_error", None
 
     def _determine_and_cache_cluster(self, entity_id: str, metrics_vector: np.ndarray) -> int:
         """
@@ -224,23 +227,24 @@ class AnomalyDetector:
         # Handle route dimension - skip if no model exists
         if dimension == 'route':
             if dimension_value is None:
-                return False, 0.0, "l2_route_no_value", None
+                return False, 0.0, "l2_route_no_value", None, None
 
             # For routes, we only use route-specific models if they exist
             # If no model exists for this route, skip L2 route detection
-            route_model = self.model_loader.get_user_model(f"route_{dimension_value}")
+            route_model = self.model_loader.get_route_model(dimension_value)
             if route_model is None:
                 # Skip L2 route detection - no model available
-                return False, 0.0, "l2_route_no_model_skip", None
+                return False, 0.0, "l2_route_no_model_skip", None, None
 
             # Route has model, proceed with detection
-            scaler = self.model_loader.get_user_scaler(f"route_{dimension_value}")
-            return self._run_isolation_forest_detection(metrics_vector, route_model, scaler, f"route_{dimension_value}")
+            scaler = self.model_loader.get_route_scaler(dimension_value)
+            result = self._run_isolation_forest_detection(metrics_vector, route_model, scaler, f"route_{dimension_value}")
+            return result + (None,)  # Add None for voting_details
 
         # Handle user dimension
         elif dimension == 'user':
             if dimension_value is None:
-                return False, 0.0, "l2_user_no_value", None
+                return False, 0.0, "l2_user_no_value", None, None
 
             user_id = dimension_value
             model = self.model_loader.get_user_model(user_id)
@@ -248,25 +252,27 @@ class AnomalyDetector:
 
             # If user has own model, use it
             if model is not None and scaler is not None:
-                return self._run_isolation_forest_detection(metrics_vector, model, scaler, f"user_{user_id}")
+                result = self._run_isolation_forest_detection(metrics_vector, model, scaler, f"user_{user_id}")
+                return result + (None,)  # Add None for voting_details
 
             # User has no model - try voting with similar users
             account = metrics.get('account')
             if account and account != 'unknown':
+                # Voting detector returns 5-tuple including voting_details
                 return self.voting_detector.detect_with_voting(entity_id, user_id, account, metrics_vector)
 
             # No account type available - skip L2 detection
-            return False, 0.0, None, None
+            return False, 0.0, "l2_user_no_account", None, None
 
         # Other dimensions or fallback
         else:
             error_rate = metrics_vector[0, 1] if metrics_vector.shape[1] > 1 else 0
             is_anomaly = error_rate > 50.0
-            return is_anomaly, float(error_rate), "l2_simple_fallback", None
+            return is_anomaly, float(error_rate), "l2_simple_fallback", None, None
 
     def _run_isolation_forest_detection(self, metrics_vector: np.ndarray,
                                         model, scaler, identifier: str) -> tuple:
-        """Run Isolation Forest detection with given model and scaler."""
+        """Run Isolation Forest detection with given model and scaler. Returns 4-tuple."""
         try:
             X_scaled = scaler.transform(metrics_vector)
 
@@ -282,7 +288,7 @@ class AnomalyDetector:
         except (ValueError, TypeError, AttributeError) as e:
             import sys
             print(f"WARNING: Isolation Forest detection failed for {identifier}: {str(e)}", file=sys.stderr)
-            return False, 0.0, None, None
+            return False, 0.0, "isolation_forest_error", None
 
 
     def _metrics_to_vector(self, metrics: dict, layer: str, dimension: str = None) -> np.ndarray:

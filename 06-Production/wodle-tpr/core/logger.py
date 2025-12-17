@@ -84,6 +84,7 @@ class WazuhLogger:
         Send event directly to Wazuh queue via Unix socket.
 
         This is the same mechanism used by the AWS wodle.
+        If enable_file_logging is true, also saves to anomaly.log.
         Falls back to file logging if socket is unavailable (e.g., Windows testing).
 
         Args:
@@ -92,8 +93,10 @@ class WazuhLogger:
         Returns:
             True if sent successfully, False otherwise
         """
+        json_msg = json.dumps(msg, default=str)
+        socket_success = False
+        
         try:
-            json_msg = json.dumps(msg, default=str)
             encoded_msg = f"{MESSAGE_HEADER}{json_msg}".encode()
 
             # Check message size
@@ -107,7 +110,7 @@ class WazuhLogger:
             s.connect(self.wazuh_queue)
             s.send(encoded_msg)
             s.close()
-            return True
+            socket_success = True
 
         except (socket.error, OSError) as e:
             # Socket not available (Windows or Wazuh not running)
@@ -121,14 +124,15 @@ class WazuhLogger:
             else:
                 self.logger.debug(f"Socket unavailable: {e}, falling back to file logging")
 
-            # Fallback: write to local anomaly log file
-            self.anomaly_logger.info(json.dumps(msg))
-            return False
-
         except Exception as e:
             self.logger.error(f"Error sending to Wazuh: {e}")
-            self.anomaly_logger.info(json.dumps(msg))
-            return False
+
+        # Always save to anomaly.log when enable_file_logging is true
+        # This provides a local backup of all alerts sent to Wazuh
+        if self.enable_file_logging:
+            self.anomaly_logger.info(json_msg)
+        
+        return socket_success
 
     def log_anomaly_alert(self, entity_id: str, analysis_result: dict) -> str:
         """
@@ -153,11 +157,19 @@ class WazuhLogger:
                 'entity_id': str(entity_id),
                 'layer': layer,
                 'anomaly_score': round(score, 6),
-                'observation_window_minutes': selected_window,
-                'model_used': window_result.get('model_used'),
-                'cluster_id': window_result.get('cluster_id')
+                'observation_window_minutes': selected_window
             }
         }
+        
+        # Only add model_used if it has an actual value
+        # Note: model_used is now always a string (never None) thanks to detector fixes
+        model_used = window_result.get('model_used')
+        if model_used:
+            event['tpr']['model_used'] = model_used
+        
+        cluster_id = window_result.get('cluster_id')
+        if cluster_id is not None:
+            event['tpr']['cluster_id'] = cluster_id
 
         # Add risk scoring data if available (as percentage 0-100%)
         if 'risk_score' in analysis_result:
@@ -172,17 +184,77 @@ class WazuhLogger:
 
         # Add L2-specific fields
         if layer == 'L2':
+            # Keep backward compatibility fields (deprecated but maintained for existing queries)
             event['tpr']['l2_dimension'] = window_result.get('l2_dimension')
             event['tpr']['l2_dimension_value'] = str(window_result.get('l2_dimension_value', ''))
 
-            # Convert l2_details list to summary string (avoid nested objects)
+            # Get risk weights for calculating individual contributions
+            risk_components = analysis_result.get('risk_components', {})
+            
+            # Include L2 anomaly details as structured JSON array with risk contributions
             l2_details = window_result.get('l2_details', [])
             if l2_details:
+                # Calculate individual risk contributions for each dimension
+                enriched_anomalies = []
+                users_count = 0
+                routes_count = 0
+                
+                for detail in l2_details:
+                    dimension = detail.get('dimension', 'unknown')
+                    score = detail.get('score', 0.0)
+                    
+                    # Calculate risk contribution based on dimension type
+                    # risk_contribution = score × weight × 100 (as percentage)
+                    if dimension == 'user':
+                        weight = 0.5  # Default from config, should match risk_weights.l2_user
+                        users_count += 1
+                    elif dimension == 'route':
+                        weight = 0.2  # Default from config, should match risk_weights.l2_route
+                        routes_count += 1
+                    else:
+                        weight = 0.0
+                    
+                    risk_contribution_pct = round(score * weight * 100, 2)
+                    
+                    enriched_anomalies.append({
+                        'dimension': dimension,
+                        'value': str(detail.get('dimension_value', '')),
+                        'score': round(score, 4),
+                        'risk_contribution_pct': risk_contribution_pct
+                    })
+                
+                # Sort by risk contribution (highest first) for easier investigation
+                enriched_anomalies.sort(key=lambda x: x['risk_contribution_pct'], reverse=True)
+                
+                # Include top 20 anomalies (increased from 5 to show more context)
+                event['tpr']['l2_anomalies'] = enriched_anomalies[:20]
                 event['tpr']['l2_anomalies_count'] = len(l2_details)
-                # Summarize top anomalies as pipe-separated values
-                event['tpr']['l2_anomalies_summary'] = '|'.join(
-                    [f"{d.get('dimension', 'unknown')}:{d.get('score', 0):.4f}" for d in l2_details[:5]]
-                )
+                
+                # Add summary for quick filtering and investigation
+                event['tpr']['l2_summary'] = {
+                    'total_anomalous_users': users_count,
+                    'total_anomalous_routes': routes_count,
+                    'top_dimension': enriched_anomalies[0]['dimension'] if enriched_anomalies else None,
+                    'top_dimension_value': enriched_anomalies[0]['value'] if enriched_anomalies else None,
+                    'top_risk_contribution_pct': enriched_anomalies[0]['risk_contribution_pct'] if enriched_anomalies else 0
+                }
+
+
+            # Add voting details if voting mechanism was used
+            voting_details = window_result.get('voting_details')
+            if voting_details:
+                event['tpr']['voting_used'] = True
+                event['tpr']['voting_voters_count'] = len(voting_details.get('voters', []))
+                
+                # Include voter IDs (limit to 10 to avoid oversized events)
+                voters = voting_details.get('voters', [])
+                if voters:
+                    event['tpr']['voting_voters'] = [str(v) for v in voters[:10]]
+                
+                # Include normalized scores (limit to 10)
+                norm_scores = voting_details.get('normalized_scores', [])
+                if norm_scores:
+                    event['tpr']['voting_scores'] = [round(s, 4) for s in norm_scores[:10]]
 
         # Send to Wazuh via socket
         self.send_to_wazuh(event)
@@ -224,14 +296,14 @@ class WazuhLogger:
             }
         }
 
-        # Convert arrays to pipe-separated strings (avoid Elasticsearch mapping conflicts)
+        # Include arrays as structured JSON (Wazuh JSON decoder handles nested objects)
         user_operations = llm_result.get('user_operations', [])
         if user_operations:
-            event['tpr']['user_operations'] = '|'.join(str(op) for op in user_operations[:10])
+            event['tpr']['user_operations'] = user_operations[:10]
 
         recommended_actions = llm_result.get('recommended_actions', [])
         if recommended_actions:
-            event['tpr']['recommended_actions'] = '|'.join(str(action) for action in recommended_actions[:5])
+            event['tpr']['recommended_actions'] = recommended_actions[:5]
 
         # Send to Wazuh via socket
         self.send_to_wazuh(event)

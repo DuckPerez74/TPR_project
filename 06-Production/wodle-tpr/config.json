@@ -106,11 +106,11 @@
     "min_score_for_alert": 0.05,
     "risk_scoring": {
       "enabled": true,
-      "threshold": 0.08,
+      "threshold": 0.15,
       "weights": {
-        "l1": 0.3,
+        "l1": 0.25,
         "l2_user": 0.5,
-        "l2_route": 0.2
+        "l2_route": 0.25
       }
     },
     "min_samples_for_detection": 10,
@@ -137,7 +137,7 @@
     "anomaly_file": "${ANOMALY_LOG_FILE}",
     "max_size_mb": 100,
     "backup_count": 5,
-    "enable_file_logging": true
+    "enable_file_logging": false
   },
   "performance": {
     "max_execution_time_seconds": 1200,

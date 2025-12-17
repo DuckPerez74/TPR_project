@@ -31,9 +31,11 @@ class ModelLoader:
         self.entity_models = {}
         self.cluster_models = {}
         self.user_models = {}
+        self.route_models = {}  # Route models cache
         self.entity_scalers = {}
         self.cluster_scalers = {}
         self.user_scalers = {}
+        self.route_scalers = {}  # Route scalers cache
         self.entity_thresholds = {}
         self.cluster_thresholds = {}
         self.kmeans_clusterer = None
@@ -157,6 +159,13 @@ class ModelLoader:
             self.user_models, self.user_scalers
         )
 
+    def _load_route_model_from_disk(self, route_id_safe: str) -> bool:
+        """Lazy load route model from disk (stored in route_models_path with user_ prefix)"""
+        return self._load_isolation_forest_model(
+            self.route_models_path, 'user', route_id_safe,
+            self.route_models, self.route_scalers
+        )
+
     def get_entity_model(self, entity_id: str):
         if entity_id not in self.entity_models:
             self._load_entity_model_from_disk(entity_id)
@@ -207,6 +216,20 @@ class ModelLoader:
         if safe_user_id not in self.user_scalers:
             self._load_user_model_from_disk(safe_user_id)
         return self.user_scalers.get(safe_user_id)
+
+    def get_route_model(self, route_id: str):
+        """Get route model (stored in route_models_path with user_ prefix)"""
+        safe_route_id = sanitize_user_id(route_id)
+        if safe_route_id not in self.route_models:
+            self._load_route_model_from_disk(safe_route_id)
+        return self.route_models.get(safe_route_id)
+
+    def get_route_scaler(self, route_id: str):
+        """Get route scaler (stored in route_models_path with user_ prefix)"""
+        safe_route_id = sanitize_user_id(route_id)
+        if safe_route_id not in self.route_scalers:
+            self._load_route_model_from_disk(safe_route_id)
+        return self.route_scalers.get(safe_route_id)
 
     def get_available_clusters(self) -> List[int]:
         # Scan directory for active clusters

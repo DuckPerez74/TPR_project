@@ -91,7 +91,11 @@ class HierarchicalAnalyzer:
             'cluster_id': None,
             'l2_dimension': None,
             'l2_dimension_value': None,
-            'l2_details': []
+            'l2_details': [],
+            # Store ALL scores for risk calculation (not just selected layer)
+            'l1_score': 0.0,
+            'l1_anomaly': False,
+            'l2_max_score': 0.0
         }
 
         if not l1_metrics and not l2_metrics:
@@ -103,13 +107,14 @@ class HierarchicalAnalyzer:
         l1_cluster = None
 
         if l1_metrics:
-            l1_anomaly, l1_score, l1_model, l1_cluster = detector.detect(entity_id, l1_metrics, 'L1')
+            l1_anomaly, l1_score, l1_model, l1_cluster, _ = detector.detect(entity_id, l1_metrics, 'L1')
 
         l2_anomaly = False
         l2_score = 0.0
         l2_dimension = None
         l2_dimension_value = None
         l2_details = []
+        l2_voting_details = None  # Store voting details if used
 
         if self.parallel_layers and l2_metrics:
             for dim_result in l2_metrics:
@@ -117,7 +122,7 @@ class HierarchicalAnalyzer:
                 if dim_metrics:
                     dim_value = dim_result.get('dimension_value')
                     dimension = dim_result.get('dimension')
-                    anomaly, score, model_used, _ = detector.detect(entity_id, dim_metrics, 'L2', dimension_value=dim_value, dimension=dimension)
+                    anomaly, score, model_used, _, voting_details = detector.detect(entity_id, dim_metrics, 'L2', dimension_value=dim_value, dimension=dimension)
 
                     if anomaly:
                         l2_details.append({
@@ -132,8 +137,16 @@ class HierarchicalAnalyzer:
                             l2_score = score
                             l2_dimension = dimension
                             l2_dimension_value = dim_value
+                            l2_voting_details = voting_details  # Capture voting details
 
         has_anomaly = l1_anomaly or (self.parallel_layers and l2_anomaly)
+
+        # Store ALL scores for risk calculation (regardless of which layer is selected)
+        result['l1_score'] = l1_score
+        result['l1_anomaly'] = l1_anomaly
+        result['l2_max_score'] = l2_score
+        result['l2_details'] = l2_details
+        result['voting_details'] = l2_voting_details  # Add voting details to result
 
         if has_anomaly:
             if l1_score >= l2_score:
@@ -146,7 +159,6 @@ class HierarchicalAnalyzer:
                 result['score'] = l2_score
                 result['l2_dimension'] = l2_dimension
                 result['l2_dimension_value'] = l2_dimension_value
-                result['l2_details'] = l2_details
 
             result['has_anomaly'] = True
 
@@ -156,6 +168,9 @@ class HierarchicalAnalyzer:
         """
         Calculate composite risk score from L1, L2 User, and L2 Route scores.
 
+        FIXED: Now considers ALL detected anomalies (L1 + L2), not just the selected layer.
+        This provides a true composite risk score that accounts for multiple simultaneous threats.
+
         Risk Score = (L1_score × w1) + (L2_User_score × w2) + (L2_Route_score × w3)
 
         Args:
@@ -164,15 +179,13 @@ class HierarchicalAnalyzer:
         Returns:
             Weighted risk score (0.0 - 1.0)
         """
-        l1_score = 0.0
+        # Use stored L1 score (always available now, even if L2 was selected)
+        l1_score = window_result.get('l1_score', 0.0)
+
         l2_user_score = 0.0
         l2_route_score = 0.0
 
-        # L1 score (if L1 anomaly detected)
-        if window_result.get('anomaly_layer') == 'L1':
-            l1_score = window_result.get('score', 0.0)
-
-        # L2 scores from l2_details
+        # L2 scores from l2_details (includes ALL L2 anomalies)
         l2_details = window_result.get('l2_details', [])
         for detail in l2_details:
             dimension = detail.get('dimension')
@@ -185,7 +198,7 @@ class HierarchicalAnalyzer:
                 # Take max score if multiple routes
                 l2_route_score = max(l2_route_score, score)
 
-        # Calculate weighted risk score
+        # Calculate weighted risk score using ALL components
         risk_score = (
             l1_score * self.risk_weights['l1'] +
             l2_user_score * self.risk_weights['l2_user'] +
@@ -222,13 +235,12 @@ class HierarchicalAnalyzer:
             return selected[0], selected[1]
 
     def _get_risk_components(self, window_result: dict) -> dict:
-        """Get breakdown of risk score components for logging."""
-        l1_score = 0.0
+        """Get breakdown of risk score components for logging (FIXED to use all scores)."""
+        # Use stored L1 score (always available now)
+        l1_score = window_result.get('l1_score', 0.0)
+
         l2_user_score = 0.0
         l2_route_score = 0.0
-
-        if window_result.get('anomaly_layer') == 'L1':
-            l1_score = window_result.get('score', 0.0)
 
         l2_details = window_result.get('l2_details', [])
         for detail in l2_details:
