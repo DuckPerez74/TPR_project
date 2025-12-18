@@ -1,3 +1,4 @@
+import logging
 import pandas as pd
 import hashlib
 from datetime import datetime
@@ -8,6 +9,9 @@ class LogCompressor:
     Compresses raw Wazuh logs into compact format for LLM analysis.
     Extracts only essential fields to minimize token usage.
     """
+
+    def __init__(self):
+        self.logger = logging.getLogger('wodle-tpr.llm.compressor')
 
     ESSENTIAL_FIELDS = {
         '@timestamp': 't',
@@ -102,15 +106,16 @@ class LogCompressor:
 
             return compressed
 
-        except Exception:
+        except Exception as e:
+            self.logger.debug(f"Failed to compress log entry: {e}")
             return None
 
     def _hash_ip(self, ip: str) -> str:
-        """Hash IP address for privacy. Returns format ip_xxxx."""
+        """Hash IP address for privacy using SHA256. Returns format ip_xxxx."""
         if not ip:
             return ''
         ip_str = str(ip)
-        hash_hex = hashlib.md5(ip_str.encode()).hexdigest()[:4]
+        hash_hex = hashlib.sha256(ip_str.encode()).hexdigest()[:4]
         return f"ip_{hash_hex}"
 
     def get_logs_summary(self, compressed_logs: list) -> dict:

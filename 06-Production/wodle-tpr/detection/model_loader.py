@@ -134,7 +134,14 @@ class ModelLoader:
         Returns:
             True if loading succeeded, False otherwise
         """
-        model_file = model_path / f"{prefix}_{identifier}.joblib"
+        # Handle empty prefix (for route models saved as entity_route)
+        if prefix:
+            model_file = model_path / f"{prefix}_{identifier}.joblib"
+            scaler_file_name = f"{prefix}_{identifier}_scaler.joblib"
+        else:
+            model_file = model_path / f"{identifier}.joblib"
+            scaler_file_name = f"{identifier}_scaler.joblib"
+            
         if not model_file.exists():
             return False
 
@@ -142,7 +149,7 @@ class ModelLoader:
             model = joblib.load(model_file)
             model_cache[identifier] = model
 
-            scaler_file = model_path / f"{prefix}_{identifier}_scaler.joblib"
+            scaler_file = model_path / scaler_file_name
             if scaler_file.exists():
                 scaler_cache[identifier] = joblib.load(scaler_file)
 

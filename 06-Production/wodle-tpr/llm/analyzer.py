@@ -3,7 +3,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import deque
 import pandas as pd
 from logging.handlers import RotatingFileHandler
@@ -13,7 +13,7 @@ from .prompts import get_analysis_prompt
 from .response_parser import ResponseParser
 
 
-def _setup_llm_file_logger() -> logging.Logger:
+def _setup_llm_file_logger(enabled: bool = True) -> logging.Logger:
     """Setup a dedicated file logger for LLM operations."""
     logger = logging.getLogger('llm_file_logger')
     
@@ -23,26 +23,31 @@ def _setup_llm_file_logger() -> logging.Logger:
     
     logger.setLevel(logging.DEBUG)
     
-    # Log file in the llm folder
-    log_path = Path(__file__).parent / 'llm.log'
-    
-    # Rotating file handler: 5MB max, keep 3 backups
-    file_handler = RotatingFileHandler(
-        log_path,
-        maxBytes=5 * 1024 * 1024,
-        backupCount=3,
-        encoding='utf-8'
-    )
-    file_handler.setLevel(logging.DEBUG)
-    
-    # Detailed format for debugging
-    formatter = logging.Formatter(
-        '%(asctime)s | %(levelname)-8s | %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(formatter)
-    
-    logger.addHandler(file_handler)
+    # Only add file handler if file logging is enabled
+    if enabled:
+        # Log file in the llm folder
+        log_path = Path(__file__).parent / 'llm.log'
+        
+        # Rotating file handler: 5MB max, keep 3 backups
+        file_handler = RotatingFileHandler(
+            log_path,
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding='utf-8'
+        )
+        file_handler.setLevel(logging.DEBUG)
+        
+        # Detailed format for debugging
+        formatter = logging.Formatter(
+            '%(asctime)s | %(levelname)-8s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(formatter)
+        
+        logger.addHandler(file_handler)
+    else:
+        # Add null handler to prevent "no handler" warnings
+        logger.addHandler(logging.NullHandler())
     
     return logger
 
@@ -56,7 +61,12 @@ class LLMAnalyzer:
             config_path: Path to llm_config.json. If None, uses default location.
         """
         self.logger = logging.getLogger('wodle-tpr.llm')
-        self.file_logger = _setup_llm_file_logger()
+        
+        # Load main config to check enable_file_logging
+        main_config = self._load_main_config()
+        enable_file_logging = main_config.get('logging', {}).get('enable_file_logging', True)
+        
+        self.file_logger = _setup_llm_file_logger(enabled=enable_file_logging)
 
         if config_path is None:
             config_path = Path(__file__).parent / 'llm_config.json'
@@ -109,6 +119,15 @@ class LLMAnalyzer:
         file_log_func = getattr(self.file_logger, level, self.file_logger.info)
         log_func(message)
         file_log_func(message)
+
+    def _load_main_config(self) -> dict:
+        """Load main config.json to get global settings like enable_file_logging."""
+        try:
+            main_config_path = Path(__file__).parent.parent / 'config.json'
+            with open(main_config_path, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
 
     def _load_config(self, config_path: Path) -> dict:
         """Load configuration from JSON file."""
@@ -236,13 +255,13 @@ class LLMAnalyzer:
             self._log(f"Rate limit exceeded, skipping LLM analysis for {entity_id}", 'warning')
             return self._create_error_result(entity_id, "Rate limit exceeded")
 
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         try:
             # Filter logs to only include the trigger window (10 minutes by default)
             # This ensures larger windows (30, 60 min) are not sent to the LLM
             if '@timestamp' in entity_df.columns:
-                window_start = start_time - timedelta(minutes=self.trigger_window)
+                window_start = (start_time - timedelta(minutes=self.trigger_window)).replace(tzinfo=None)
                 filtered_df = entity_df[entity_df['@timestamp'] >= window_start].copy()
                 if filtered_df.empty:
                     self._log(f"No logs found in {self.trigger_window}min window for {entity_id}", 'warning')
@@ -270,7 +289,7 @@ class LLMAnalyzer:
 
             parsed = self.response_parser.parse(llm_response)
 
-            elapsed_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            elapsed_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
 
             result = {
                 'entity_id': entity_id,
@@ -313,19 +332,10 @@ class LLMAnalyzer:
             self._log(f"LLM API call attempt {attempt + 1}/{self.max_retries}")
             try:
                 if self.provider == 'anthropic':
-                    # Anthropic SDK doesn't support timeout directly in the call
-                    # We'll use a wrapper approach
-                    import httpx
-                    timeout_config = httpx.Timeout(self.timeout, connect=10.0)
-
-                    if self._client is None or not hasattr(self._client, '_client'):
-                        # Reinitialize with timeout
-                        from anthropic import Anthropic
-                        api_key = os.getenv(self.config.get('api_key_env', 'ANTHROPIC_API_KEY'))
-                        self._client = Anthropic(
-                            api_key=api_key,
-                            timeout=timeout_config
-                        )
+                    # Ensure client has timeout configured
+                    if self._client is None:
+                        self._log("Client is None, cannot proceed", 'error')
+                        return None
 
                     response = self._client.messages.create(
                         model=self.model,
@@ -382,7 +392,7 @@ class LLMAnalyzer:
         """Create error result when analysis fails."""
         return {
             'entity_id': entity_id,
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             'classification': 'Unknown',
             'threat_type': 'None',
             'user_operations': [],

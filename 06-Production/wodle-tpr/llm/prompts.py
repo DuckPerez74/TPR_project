@@ -37,21 +37,6 @@ Important notes:
 """
 
 
-OPERATION_VERBS = {
-    'GET': 'Queried',
-    'POST': 'Created/Sent',
-    'PUT': 'Modified',
-    'PATCH': 'Updated',
-    'DELETE': 'Attempted to delete'
-}
-
-
-SENSITIVE_ROUTES = [
-    '/admin', '/backup', '/export', '/config', '/roles',
-    '/permissions', '/users', '/settings', '/audit', '/logs'
-]
-
-
 def get_analysis_prompt(context_text: str) -> str:
     """
     Get the complete analysis prompt with context injected.
@@ -63,9 +48,3 @@ def get_analysis_prompt(context_text: str) -> str:
         Complete prompt string
     """
     return ANALYSIS_PROMPT.format(context=context_text)
-
-
-def is_sensitive_route(route: str) -> bool:
-    """Check if a route is considered sensitive."""
-    route_lower = route.lower()
-    return any(sensitive in route_lower for sensitive in SENSITIVE_ROUTES)

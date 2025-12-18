@@ -471,6 +471,86 @@ def fetch_all_l1_metrics_by_window(client, index_name, start_date, end_date, win
         return {}
 
 
+def fetch_cluster_l1_metrics(client, index_name, entity_ids, start_date, end_date, window_minutes):
+    """
+    Fetch L1 metrics for a SPECIFIC LIST of entities (e.g., entities in a cluster).
+    Optimized to fetch all entities in ONE query instead of N queries.
+
+    Args:
+        client: OpenSearch client
+        index_name: Index pattern
+        entity_ids: List of entity IDs to fetch (e.g., entities in cluster 0)
+        start_date: Start datetime
+        end_date: End datetime
+        window_minutes: Observation window size in minutes
+
+    Returns:
+        Numpy array of all samples from all entities (concatenated)
+    """
+    if not entity_ids:
+        return np.array([])
+
+    query = {
+        "query": {
+            "bool": {
+                "must": [
+                    {"term": {"layer.keyword": "L1"}},
+                    {"term": {"observation_window": window_minutes}},
+                    {
+                        "range": {
+                            "@timestamp": {
+                                "gte": start_date.isoformat(),
+                                "lt": end_date.isoformat()
+                            }
+                        }
+                    }
+                ],
+                "filter": {
+                    "terms": {
+                        "entity_id.keyword": entity_ids
+                    }
+                }
+            }
+        },
+        "size": 10000,
+        "sort": [{"@timestamp": "asc"}]
+    }
+
+    try:
+        all_docs = []
+        response = client.search(index=index_name, body=query, scroll='2m', ignore_unavailable=True)
+        scroll_id = response.get('_scroll_id')
+        hits = response['hits']['hits']
+        all_docs.extend(hits)
+
+        # Fetch ALL documents
+        while hits:
+            response = client.scroll(scroll_id=scroll_id, scroll='2m')
+            hits = response['hits']['hits']
+            all_docs.extend(hits)
+            scroll_id = response.get('_scroll_id')
+
+        if scroll_id:
+            try:
+                client.clear_scroll(scroll_id=scroll_id)
+            except:
+                pass
+
+        # Collect all samples
+        all_samples = []
+        for doc in all_docs:
+            source = doc['_source']
+            metrics = source.get('metrics', {})
+            sample = [metrics.get(feat, 0) for feat in L1_FEATURE_ORDER]
+            all_samples.append(sample)
+
+        return np.array(all_samples) if all_samples else np.array([])
+
+    except Exception as e:
+        print(f"    ERROR: Failed to fetch cluster L1 metrics for {len(entity_ids)} entities: {str(e)}")
+        return np.array([])
+
+
 def fetch_all_l2_metrics_by_dimension_window(client, index_name, start_date, end_date, dimension, window_minutes):
     """
     Fetch L2 metrics for ALL entities at once for a specific dimension and window.

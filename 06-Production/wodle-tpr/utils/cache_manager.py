@@ -1,8 +1,3 @@
-"""
-Base cache manager with TTL and LRU eviction support.
-
-Provides a reusable foundation for caching across the project.
-"""
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Optional, Any, Dict
@@ -10,37 +5,12 @@ from abc import ABC
 
 
 class CacheManager(ABC):
-    """
-    Base class for cache management with TTL and LRU eviction.
-
-    Features:
-    - Time-to-live (TTL) expiration
-    - LRU (Least Recently Used) eviction when max size reached
-    - Thread-safe operations (subclasses should add locks if needed)
-    """
-
     def __init__(self, max_size: int = 1000, ttl_minutes: int = 60):
-        """
-        Initialize cache manager.
-
-        Args:
-            max_size: Maximum number of entries in cache
-            ttl_minutes: Time-to-live for cache entries in minutes
-        """
         self.max_size = max_size
         self.ttl = timedelta(minutes=ttl_minutes)
         self._cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 
     def get(self, key: str) -> Optional[Any]:
-        """
-        Get value from cache if exists and not expired.
-
-        Args:
-            key: Cache key
-
-        Returns:
-            Cached value or None if not found/expired
-        """
         if key not in self._cache:
             return None
 
@@ -57,13 +27,6 @@ class CacheManager(ABC):
         return entry.get('value')
 
     def set(self, key: str, value: Any) -> None:
-        """
-        Set value in cache.
-
-        Args:
-            key: Cache key
-            value: Value to cache
-        """
         # Update existing entry
         if key in self._cache:
             self._cache.move_to_end(key)
@@ -79,26 +42,13 @@ class CacheManager(ABC):
             self._cache.popitem(last=False)  # Remove oldest (FIFO/LRU)
 
     def delete(self, key: str) -> None:
-        """
-        Delete entry from cache.
-
-        Args:
-            key: Cache key
-        """
         if key in self._cache:
             del self._cache[key]
 
     def clear(self) -> None:
-        """Clear all cache entries."""
         self._cache.clear()
 
     def get_stats(self) -> Dict[str, Any]:
-        """
-        Get cache statistics.
-
-        Returns:
-            Dictionary with cache stats
-        """
         return {
             'size': len(self._cache),
             'max_size': self.max_size,
@@ -107,12 +57,6 @@ class CacheManager(ABC):
         }
 
     def cleanup_expired(self) -> int:
-        """
-        Remove all expired entries.
-
-        Returns:
-            Number of entries removed
-        """
         now = datetime.utcnow()
         expired_keys = [
             key for key, entry in self._cache.items()

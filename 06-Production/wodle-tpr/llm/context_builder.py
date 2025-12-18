@@ -1,5 +1,6 @@
+import json
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from .log_compressor import LogCompressor
 
 
@@ -52,7 +53,7 @@ class ContextBuilder:
             'alert_context': {
                 'entity_id': entity_id,
                 'window_minutes': window_minutes,
-                'timestamp': datetime.utcnow().isoformat() + 'Z'
+                'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
             },
             'anomaly_details': {
                 'layer': window_result.get('anomaly_layer', 'L1'),
@@ -138,7 +139,6 @@ class ContextBuilder:
         if logs:
             lines.append("## Log Entries")
             lines.append("```json")
-            import json
             lines.append(json.dumps(logs, indent=None, separators=(',', ':')))
             lines.append("```")
 
