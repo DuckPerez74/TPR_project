@@ -156,6 +156,11 @@ class EntityProcessor:
         """
         Run anomaly detection and log results.
 
+        Flow:
+        1. Run anomaly detection
+        2. Log alert immediately (with alert_id for correlation)
+        3. For critical alerts, run LLM async and update OpenSearch document
+
         Args:
             entity_id: Entity identifier
             entity_df: DataFrame with entity logs
@@ -171,9 +176,11 @@ class EntityProcessor:
             if result is None:
                 return False
 
+            # Log alert IMMEDIATELY (don't wait for LLM)
             alert_id = self.logger.log_anomaly_alert(entity_id, result)
 
-            # Run LLM analysis if configured
+            # Run LLM analysis AFTER alert is sent (async approach)
+            # LLM will update the OpenSearch document using alert_id
             if self.llm_analyzer and self.llm_analyzer.should_analyze(result):
                 self._run_llm_analysis(entity_id, entity_df, result, l1_metrics_by_window, alert_id)
 
@@ -186,14 +193,14 @@ class EntityProcessor:
     def _run_llm_analysis(self, entity_id: str, entity_df: pd.DataFrame, anomaly_result: Dict,
                           l1_metrics_by_window: Dict, alert_id: str) -> None:
         """
-        Run LLM analysis on anomaly.
+        Run LLM analysis on anomaly and update OpenSearch document.
 
         Args:
             entity_id: Entity identifier
             entity_df: DataFrame with entity logs
             anomaly_result: Anomaly detection result
             l1_metrics_by_window: L1 metrics by window
-            alert_id: Alert identifier for correlation
+            alert_id: Alert identifier for finding document in OpenSearch
         """
         try:
             # Use the configured trigger window for metrics
@@ -206,7 +213,8 @@ class EntityProcessor:
             llm_result = self.llm_analyzer.analyze(entity_id, anomaly_result, metrics, entity_df)
 
             if llm_result and not llm_result.get('error'):
-                self.logger.log_llm_analysis(entity_id, llm_result, alert_id)
+                # Update the existing alert document in OpenSearch with LLM analysis
+                self.logger.update_alert_with_llm(alert_id, llm_result)
 
         except Exception as e:
             self.logger.log_error(f"LLM analysis failed for entity {entity_id}", e)

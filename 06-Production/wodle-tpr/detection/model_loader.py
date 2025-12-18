@@ -159,12 +159,22 @@ class ModelLoader:
             self.user_models, self.user_scalers
         )
 
-    def _load_route_model_from_disk(self, route_id_safe: str) -> bool:
-        """Lazy load route model from disk (stored in route_models_path with user_ prefix)"""
-        return self._load_isolation_forest_model(
-            self.route_models_path, 'user', route_id_safe,
-            self.route_models, self.route_scalers
+    def _load_route_model_from_disk(self, entity_id: str, route_id_safe: str) -> bool:
+        """Lazy load route model from disk (stored with entity_route naming)"""
+        safe_entity_id = "".join([c if c.isalnum() else "_" for c in str(entity_id)])
+        combined_id = f"{safe_entity_id}_{route_id_safe}"
+        # Store with combined key for lookup
+        cache_key = f"{entity_id}::{route_id_safe}"
+        temp_models = {}
+        temp_scalers = {}
+        result = self._load_isolation_forest_model(
+            self.route_models_path, '', combined_id,
+            temp_models, temp_scalers
         )
+        if result:
+            self.route_models[cache_key] = temp_models[combined_id]
+            self.route_scalers[cache_key] = temp_scalers[combined_id]
+        return result
 
     def get_entity_model(self, entity_id: str):
         if entity_id not in self.entity_models:
@@ -217,19 +227,21 @@ class ModelLoader:
             self._load_user_model_from_disk(safe_user_id)
         return self.user_scalers.get(safe_user_id)
 
-    def get_route_model(self, route_id: str):
-        """Get route model (stored in route_models_path with user_ prefix)"""
+    def get_route_model(self, route_id: str, entity_id: str = None):
+        """Get route model (stored with entity_route naming)"""
         safe_route_id = sanitize_user_id(route_id)
-        if safe_route_id not in self.route_models:
-            self._load_route_model_from_disk(safe_route_id)
-        return self.route_models.get(safe_route_id)
+        cache_key = f"{entity_id}::{safe_route_id}" if entity_id else safe_route_id
+        if cache_key not in self.route_models and entity_id:
+            self._load_route_model_from_disk(entity_id, safe_route_id)
+        return self.route_models.get(cache_key)
 
-    def get_route_scaler(self, route_id: str):
-        """Get route scaler (stored in route_models_path with user_ prefix)"""
+    def get_route_scaler(self, route_id: str, entity_id: str = None):
+        """Get route scaler (stored with entity_route naming)"""
         safe_route_id = sanitize_user_id(route_id)
-        if safe_route_id not in self.route_scalers:
-            self._load_route_model_from_disk(safe_route_id)
-        return self.route_scalers.get(safe_route_id)
+        cache_key = f"{entity_id}::{safe_route_id}" if entity_id else safe_route_id
+        if cache_key not in self.route_scalers and entity_id:
+            self._load_route_model_from_disk(entity_id, safe_route_id)
+        return self.route_scalers.get(cache_key)
 
     def get_available_clusters(self) -> List[int]:
         # Scan directory for active clusters

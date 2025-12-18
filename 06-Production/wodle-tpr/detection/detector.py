@@ -222,11 +222,12 @@ class AnomalyDetector:
             if dimension_value is None:
                 return False, 0.0, "l2_route_no_value", None
 
-            route_model = self.model_loader.get_route_model(dimension_value)
+            # Pass entity_id to get entity-specific route model
+            route_model = self.model_loader.get_route_model(dimension_value, entity_id=entity_id)
             if route_model is None:
                 return False, 0.0, "l2_route_no_model", None
 
-            scaler = self.model_loader.get_route_scaler(dimension_value)
+            scaler = self.model_loader.get_route_scaler(dimension_value, entity_id=entity_id)
             return self._run_isolation_forest_detection(metrics_vector, route_model, scaler, f"route_{dimension_value}")
 
         # Handle user dimension

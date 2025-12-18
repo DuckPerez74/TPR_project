@@ -75,7 +75,16 @@ class IsolationForestTrainer:
             return False
         return True
 
-    def save_model(self, model_data, user_id, output_dir):
+    def save_model(self, model_data, user_id, output_dir, entity_id=None):
+        """
+        Save Isolation Forest model to disk.
+        
+        Args:
+            model_data: Dict with 'model' and 'scaler'
+            user_id: User/Route identifier
+            output_dir: Output directory path
+            entity_id: Optional entity_id for route models (creates entity_route naming)
+        """
         if not self._is_valid_user_id(user_id):
             import sys
             print(f"ERROR: Cannot save model, invalid user_id: {user_id[:50]}", file=sys.stderr)
@@ -91,9 +100,15 @@ class IsolationForestTrainer:
             output_path.mkdir(parents=True, exist_ok=True)
 
             safe_user_id = "".join([c if c.isalnum() else "_" for c in user_id])
-
-            model_file = output_path / f"user_{safe_user_id}.joblib"
-            scaler_file = output_path / f"user_{safe_user_id}_scaler.joblib"
+            
+            # If entity_id is provided, prefix the filename with entity_id
+            if entity_id:
+                safe_entity_id = "".join([c if c.isalnum() else "_" for c in str(entity_id)])
+                model_file = output_path / f"{safe_entity_id}_{safe_user_id}.joblib"
+                scaler_file = output_path / f"{safe_entity_id}_{safe_user_id}_scaler.joblib"
+            else:
+                model_file = output_path / f"user_{safe_user_id}.joblib"
+                scaler_file = output_path / f"user_{safe_user_id}_scaler.joblib"
 
             joblib.dump(model_data['model'], model_file)
             joblib.dump(model_data['scaler'], scaler_file)

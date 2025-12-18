@@ -209,7 +209,10 @@ class WazuhLogger:
                 'triggers': triggers,
                 
                 # Top impacted (for quick investigation)
-                'top_impacts': top_impacts if top_impacts else None
+                'top_impacts': top_impacts if top_impacts else None,
+                
+                # Drill-down query
+                'details_query': f"entity_id:{entity_id} AND @timestamp:[now-{selected_window}m TO now]"
             }
         }
         
@@ -279,6 +282,106 @@ class WazuhLogger:
             'classification': llm_result.get('classification'),
             'threat_type': llm_result.get('threat_type')
         }))
+
+    def update_alert_with_llm(self, alert_id: str, llm_result: dict) -> bool:
+        """
+        Update existing alert document in OpenSearch with LLM analysis.
+
+        This is called after LLM analysis completes to add LLM fields to the
+        original alert document, keeping everything in one place.
+
+        Args:
+            alert_id: The alert_id used to find the document
+            llm_result: LLM analysis result dict
+
+        Returns:
+            True if update successful, False otherwise
+        """
+        try:
+            from core.opensearch_client import OpenSearchClient
+            client = OpenSearchClient.get_instance()
+
+            # Search for the document by alert_id in wazuh-alerts indices
+            search_body = {
+                "query": {
+                    "bool": {
+                        "must": [
+                            {"term": {"data.tpr.alert_id": alert_id}},
+                            {"term": {"data.tpr.event_type": "anomaly"}}
+                        ]
+                    }
+                },
+                "size": 1,
+                "sort": [{"@timestamp": "desc"}]
+            }
+
+            # Search in recent wazuh-alerts indices
+            today = datetime.utcnow().strftime("%Y.%m.%d")
+            index_pattern = f"wazuh-alerts-4.x-{today}"
+
+            response = client.search(index=index_pattern, body=search_body)
+            hits = response.get('hits', {}).get('hits', [])
+
+            if not hits:
+                self.logger.warning(f"Could not find alert document for alert_id: {alert_id}")
+                # Fallback: send as separate log via Wazuh socket
+                entity_id = llm_result.get('entity_id', 'unknown')
+                self.log_llm_analysis(entity_id, llm_result, alert_id)
+                return False
+
+            doc_id = hits[0]['_id']
+            doc_index = hits[0]['_index']
+
+            # Build LLM analysis update
+            llm_analysis = {
+                'classification': llm_result.get('classification', 'Unknown'),
+                'threat_type': llm_result.get('threat_type', 'Unknown'),
+                'confidence': llm_result.get('confidence', 'Unknown'),
+                'explanation': llm_result.get('explanation', ''),
+                'model': llm_result.get('model', ''),
+                'logs_analyzed': llm_result.get('logs_analyzed', 0),
+                'execution_time_ms': llm_result.get('execution_time_ms', 0)
+            }
+
+            # Include user operations (max 10)
+            user_operations = llm_result.get('user_operations', [])
+            if user_operations:
+                llm_analysis['user_operations'] = user_operations[:10]
+
+            # Include recommended actions (max 5)
+            recommended_actions = llm_result.get('recommended_actions', [])
+            if recommended_actions:
+                llm_analysis['recommended_actions'] = recommended_actions[:5]
+
+            # Update the document
+            update_body = {
+                "doc": {
+                    "data": {
+                        "tpr": {
+                            "llm_analysis": llm_analysis
+                        }
+                    }
+                }
+            }
+
+            client.update(index=doc_index, id=doc_id, body=update_body)
+
+            self.logger.info(json.dumps({
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'event_type': 'alert_updated_with_llm',
+                'alert_id': alert_id,
+                'doc_id': doc_id,
+                'classification': llm_result.get('classification')
+            }))
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to update alert with LLM analysis: {e}")
+            # Fallback: send as separate log
+            entity_id = llm_result.get('entity_id', 'unknown')
+            self.log_llm_analysis(entity_id, llm_result, alert_id)
+            return False
 
     def log_anomaly(self, entity_id: str, window: int, score: float,
                     layer: str, metrics_summary: dict):

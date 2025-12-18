@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import timedelta
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from functools import partial
+import multiprocessing as mp
 
 from constants import L1_FEATURE_ORDER, L2_USER_FEATURES, L2_ROUTE_FEATURES
 from core import OpenSearchClient
@@ -25,28 +26,76 @@ from training import KMeansClusterer, ModelTrainer, IsolationForestTrainer
 from detection import ModelAssignmentCache
 
 
+# Global GPU semaphore - initialized by parent process, shared with workers
+# Limits concurrent GPU access to avoid CUDA illegal memory access errors
+_gpu_semaphore = None
+
+# Global checkpoint file path - shared with workers for saving progress
+_checkpoint_file = None
+_checkpoint_lock = None
+
+def _init_gpu_semaphore(semaphore, checkpoint_file=None, checkpoint_lock=None):
+    """Initialize the global GPU semaphore and checkpoint file in worker processes."""
+    global _gpu_semaphore, _checkpoint_file, _checkpoint_lock
+    _gpu_semaphore = semaphore
+    _checkpoint_file = checkpoint_file
+    _checkpoint_lock = checkpoint_lock
+
+
+def _load_completed_entities(checkpoint_file):
+    """
+    Load the set of already completed entity IDs from checkpoint file.
+    
+    Args:
+        checkpoint_file: Path to the checkpoint file
+        
+    Returns:
+        Set of entity IDs that have been processed
+    """
+    completed = set()
+    if checkpoint_file and Path(checkpoint_file).exists():
+        try:
+            with open(checkpoint_file, 'r') as f:
+                for line in f:
+                    entity_id = line.strip()
+                    if entity_id:
+                        completed.add(entity_id)
+        except Exception as e:
+            print(f"    WARNING: Could not read checkpoint file: {e}")
+    return completed
+
+
+def _save_completed_entity(entity_id):
+    """
+    Append a completed entity ID to the checkpoint file.
+    Thread-safe using lock.
+    
+    Args:
+        entity_id: The entity ID that was successfully processed
+    """
+    global _checkpoint_file, _checkpoint_lock
+    if _checkpoint_file:
+        try:
+            if _checkpoint_lock:
+                _checkpoint_lock.acquire()
+            with open(_checkpoint_file, 'a') as f:
+                f.write(f"{entity_id}\n")
+        except Exception as e:
+            print(f"    WARNING: Could not save checkpoint for {entity_id}: {e}")
+        finally:
+            if _checkpoint_lock:
+                _checkpoint_lock.release()
+
+
 # Helper functions for parallel training
 
 def _get_optimal_workers(task_type='cpu'):
-    """
-    Determine optimal number of workers based on CPU count and instance type.
 
-    CRITICAL: Limited to max 4 workers to prevent memory exhaustion when training
-    thousands of models. Each worker duplicates data and models in RAM.
-
-    Args:
-        task_type: 'cpu' for CPU-bound (ProcessPoolExecutor), 'io' for I/O-bound (ThreadPoolExecutor)
-
-    Returns:
-        int: Recommended number of workers (max 4)
-    """
     import multiprocessing
 
     cpu_count = multiprocessing.cpu_count()
 
-    # HARD LIMIT: Max 4 workers to balance speed and memory usage
-    # Each worker processes one entity at a time, which can be memory-intensive
-    max_workers = 4
+    max_workers = 24
 
     print(f"    → Detected {cpu_count} CPUs")
     print(f"    → Using {max_workers} parallel workers (memory-optimized for training thousands of models)")
@@ -56,21 +105,34 @@ def _get_optimal_workers(task_type='cpu'):
 
 def _train_single_entity_model(args):
     """Helper for parallel entity model training. Returns (entity_id, model_data, window)."""
+    global _gpu_semaphore
     entity_id, samples, window, config = args
 
     if len(samples) < 100:
         return entity_id, None, window
 
-    trainer = ModelTrainer(
-        input_dim=len(L1_FEATURE_ORDER),
-        encoding_dim=12,
-        hidden_dim=30,
-        batch_size=256,
-        learning_rate=0.001,
-        epochs=100
-    )
-
-    model_data = trainer.train_entity_model(entity_id, samples)
+    # Use GPU semaphore if available, otherwise use CPU
+    # This allows controlled GPU access (e.g., 2 processes at a time)
+    use_gpu = _gpu_semaphore is not None
+    
+    if use_gpu:
+        _gpu_semaphore.acquire()
+    
+    try:
+        trainer = ModelTrainer(
+            input_dim=len(L1_FEATURE_ORDER),
+            encoding_dim=12,
+            hidden_dim=30,
+            batch_size=256,
+            learning_rate=0.001,
+            epochs=100,
+            force_cpu=not use_gpu  # Use GPU if semaphore available
+        )
+        model_data = trainer.train_entity_model(entity_id, samples)
+    finally:
+        if use_gpu:
+            _gpu_semaphore.release()
+    
     return entity_id, model_data, window
 
 
@@ -160,15 +222,29 @@ def _process_single_entity_all_windows(args):
             if train_l1 and len(samples) >= 100:
                 t1 = time.time()
                 print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min: Training L1 autoencoder...")
-                trainer = ModelTrainer(
-                    input_dim=len(L1_FEATURE_ORDER),
-                    encoding_dim=12,
-                    hidden_dim=30,
-                    batch_size=256,
-                    learning_rate=0.001,
-                    epochs=100
-                )
-                model_data = trainer.train_entity_model(entity_id, samples)
+                
+                # Use GPU semaphore if available for controlled GPU access
+                # Allows 24 workers to fetch data, but only 1-2 train on GPU at a time
+                global _gpu_semaphore
+                use_gpu = _gpu_semaphore is not None
+                
+                if use_gpu:
+                    _gpu_semaphore.acquire()
+                
+                try:
+                    trainer = ModelTrainer(
+                        input_dim=len(L1_FEATURE_ORDER),
+                        encoding_dim=12,
+                        hidden_dim=30,
+                        batch_size=256,
+                        learning_rate=0.001,
+                        epochs=100,
+                        force_cpu=not use_gpu  # Use GPU if semaphore available
+                    )
+                    model_data = trainer.train_entity_model(entity_id, samples)
+                finally:
+                    if use_gpu:
+                        _gpu_semaphore.release()
 
                 if model_data:
                     entity_models_path = models_base / 'entity_models' / f'{window}min'
@@ -236,7 +312,8 @@ def _process_single_entity_all_windows(args):
                     if len(samples) >= 20:
                         model_data = trainer.train_user_model(route_value, samples)
                         if model_data:
-                            trainer.save_model(model_data, route_value, route_models_path)
+                            # Pass entity_id to create entity_route naming
+                            trainer.save_model(model_data, route_value, route_models_path, entity_id=entity_id)
                             results['l2_models_trained']['route'][window] += 1
                             trained_count += 1
 
@@ -254,6 +331,10 @@ def _process_single_entity_all_windows(args):
     total_route = sum(results['l2_models_trained'].get('route', {}).values())
 
     print(f"    [{_timestamp()}] [Entity {entity_id}] ✓ Completed all windows in {total_time} (L1:{total_l1}, User:{total_user}, Route:{total_route}) - clearing memory")
+    
+    # Save checkpoint - mark this entity as completed
+    _save_completed_entity(entity_id)
+    
     gc.collect()
 
     return results
@@ -687,45 +768,87 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
 
     # NEW APPROACH: Process ONE entity at a time (all windows + all layers)
     if all_entities:
-        print(f"\n  [PHASE 2/3] Processing {len(all_entities)} entities (one at a time)...")
+        # ========== CHECKPOINT SYSTEM ==========
+        # Load already processed entities to resume from where we left off
+        checkpoint_file = models_base / 'training_checkpoint.txt'
+        completed_entities = _load_completed_entities(checkpoint_file)
+        
+        if completed_entities:
+            original_count = len(all_entities)
+            all_entities = [e for e in all_entities if e not in completed_entities]
+            skipped_count = original_count - len(all_entities)
+            print(f"\n  📋 CHECKPOINT: Found {skipped_count} already processed entities")
+            print(f"  📋 Resuming from checkpoint: {len(all_entities)} entities remaining")
+            print(f"  📋 Checkpoint file: {checkpoint_file}")
+            if len(all_entities) == 0:
+                print(f"  ✓ All entities already processed! Delete checkpoint to retrain.")
+        else:
+            print(f"\n  📋 Starting fresh (no checkpoint found)")
+            print(f"  📋 Progress will be saved to: {checkpoint_file}")
+        
+        if all_entities:
+            print(f"\n  [PHASE 2/3] Processing {len(all_entities)} entities (one at a time)...")
 
-        # Prepare arguments for parallel processing
-        entity_jobs = []
-        for entity_id in all_entities:
-            job_args = (
-                entity_id, config, metrics_index, warmup_start, warmup_end,
-                observation_windows, l2_dimensions, models_base,
-                cluster_assignments, train_l1, train_cluster
-            )
-            entity_jobs.append(job_args)
+            # Prepare arguments for parallel processing
+            entity_jobs = []
+            for entity_id in all_entities:
+                job_args = (
+                    entity_id, config, metrics_index, warmup_start, warmup_end,
+                    observation_windows, l2_dimensions, models_base,
+                    cluster_assignments, train_l1, train_cluster
+                )
+                entity_jobs.append(job_args)
 
-        max_workers = _get_optimal_workers(task_type='cpu')
+            max_workers = _get_optimal_workers(task_type='cpu')
+            
+            # Create GPU semaphore to control concurrent GPU access
+            # Prevents CUDA illegal memory access by limiting simultaneous GPU trainings
+            import torch
+            gpu_available = torch.cuda.is_available()
+            gpu_concurrent_limit = 6  # Max processes using GPU simultaneously (safe for 12GB GPUs)
+            # NOTE: If you get CUDA out of memory errors, reduce this to 4
+            
+            # Create manager for shared objects between processes
+            manager = mp.Manager()
+            checkpoint_lock = manager.Lock()  # Lock for thread-safe checkpoint writes
+            
+            if gpu_available:
+                gpu_semaphore = manager.Semaphore(gpu_concurrent_limit)
+                print(f"  ⚙  GPU detected! Using GPU semaphore (max {gpu_concurrent_limit} concurrent GPU trainings)")
+            else:
+                gpu_semaphore = None
+                print(f"  ⚙  No GPU detected, using CPU for all training")
 
-        print(f"  ⚙  Using {max_workers} parallel workers to process entities")
-        print(f"  ⚙  Each worker processes one entity completely before moving to next")
-        print(f"")
+            print(f"  ⚙  Using {max_workers} parallel workers to process entities")
+            print(f"  ⚙  Each worker processes one entity completely before moving to next")
+            print(f"")
 
-        # Process entities with limited parallelism
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_process_single_entity_all_windows, job): job[0] for job in entity_jobs}
+            # Process entities with limited parallelism
+            # Use initializer to share GPU semaphore and checkpoint file with worker processes
+            with ProcessPoolExecutor(
+                max_workers=max_workers,
+                initializer=_init_gpu_semaphore,
+                initargs=(gpu_semaphore, str(checkpoint_file), checkpoint_lock)
+            ) as executor:
+                futures = {executor.submit(_process_single_entity_all_windows, job): job[0] for job in entity_jobs}
 
-            completed = 0
-            total_l1_trained = 0
-            total_l2_user_trained = 0
-            total_l2_route_trained = 0
+                completed = 0
+                total_l1_trained = 0
+                total_l2_user_trained = 0
+                total_l2_route_trained = 0
 
-            for future in as_completed(futures):
-                entity_id = futures[future]
-                result = future.result()
+                for future in as_completed(futures):
+                    entity_id = futures[future]
+                    result = future.result()
 
-                # Count models trained for this entity
-                entity_l1_count = sum(result['l1_models_trained'].values())
-                entity_l2_user_count = sum(result['l2_models_trained'].get('user', {}).values())
-                entity_l2_route_count = sum(result['l2_models_trained'].get('route', {}).values())
+                    # Count models trained for this entity
+                    entity_l1_count = sum(result['l1_models_trained'].values())
+                    entity_l2_user_count = sum(result['l2_models_trained'].get('user', {}).values())
+                    entity_l2_route_count = sum(result['l2_models_trained'].get('route', {}).values())
 
-                total_l1_trained += entity_l1_count
-                total_l2_user_trained += entity_l2_user_count
-                total_l2_route_trained += entity_l2_route_count
+                    total_l1_trained += entity_l1_count
+                    total_l2_user_trained += entity_l2_user_count
+                    total_l2_route_trained += entity_l2_route_count
 
                 # Aggregate results
                 for window in observation_windows:
@@ -756,17 +879,18 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
 
                 print(f"    → [{completed}/{len(all_entities)} = {progress_pct:.1f}%] Entity {entity_id}: {models_str} | Total so far: L1={total_l1_trained}, User={total_l2_user_trained}, Route={total_l2_route_trained}")
 
-        print(f"\n  ✓ Entity processing complete!")
-        if train_l1:
-            print(f"  ✓ L1 Entity models trained: {l1_entity_models_trained}")
-        if l2_dimensions:
-            for dim in l2_dimensions:
-                print(f"  ✓ L2 {dim} models trained: {l2_models_trained[dim]}")
+            print(f"\n  ✓ Entity processing complete!")
+            print(f"  📋 Checkpoint saved: {checkpoint_file}")
+            if train_l1:
+                print(f"  ✓ L1 Entity models trained: {l1_entity_models_trained}")
+            if l2_dimensions:
+                for dim in l2_dimensions:
+                    print(f"  ✓ L2 {dim} models trained: {l2_models_trained[dim]}")
 
-        # Explicit memory cleanup after all entities processed
-        import gc
-        gc.collect()
-        print(f"  ✓ Memory freed after entity processing")
+            # Explicit memory cleanup after all entities processed
+            import gc
+            gc.collect()
+            print(f"  ✓ Memory freed after entity processing")
 
     cluster_models_trained = {window: 0 for window in observation_windows}
 

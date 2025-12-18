@@ -16,14 +16,19 @@ warnings.filterwarnings('ignore', category=UserWarning, module='torch.cuda')
 
 class ModelTrainer:
     def __init__(self, input_dim=46, encoding_dim=12, hidden_dim=30,
-                 batch_size=256, learning_rate=0.001, epochs=100):
+                 batch_size=256, learning_rate=0.001, epochs=100, force_cpu=False):
         self.input_dim = input_dim
         self.encoding_dim = encoding_dim
         self.hidden_dim = hidden_dim
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.epochs = epochs
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # Use CPU when force_cpu=True (for parallel workers to avoid CUDA conflicts)
+        # Multiple processes accessing GPU simultaneously causes illegal memory access errors
+        if force_cpu:
+            self.device = torch.device('cpu')
+        else:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def train_entity_model(self, entity_id, metrics_data):
         X = np.array(metrics_data)
