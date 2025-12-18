@@ -10,21 +10,30 @@ SCRIPT_NAME="$(basename ${SCRIPT_PATH_NAME})"
 PYTHON_SCRIPT="${DIR_NAME}/${SCRIPT_NAME}.py"
 LOG_FILE="${DIR_NAME}/tpr_debug.log"
 
+# Set to 0 to disable debug logging
+ENABLE_LOG=0
+
 # Change to script directory (for .env and relative paths)
 cd "${DIR_NAME}"
 
-# Log execution attempt with timestamp
-echo "=== $(date) ===" >> "${LOG_FILE}"
-echo "DIR_NAME: ${DIR_NAME}" >> "${LOG_FILE}"
-echo "PYTHON_SCRIPT: ${PYTHON_SCRIPT}" >> "${LOG_FILE}"
-echo "User: $(whoami)" >> "${LOG_FILE}"
-echo "PATH: ${PATH}" >> "${LOG_FILE}"
+if [ "${ENABLE_LOG}" = "1" ]; then
+    # Log execution attempt with timestamp
+    echo "=== $(date) ===" >> "${LOG_FILE}"
+    echo "DIR_NAME: ${DIR_NAME}" >> "${LOG_FILE}"
+    echo "PYTHON_SCRIPT: ${PYTHON_SCRIPT}" >> "${LOG_FILE}"
+    echo "User: $(whoami)" >> "${LOG_FILE}"
+    echo "PATH: ${PATH}" >> "${LOG_FILE}"
 
-# Use absolute path to Python, capture all output
-/usr/bin/python3 ${PYTHON_SCRIPT} "$@" >> "${LOG_FILE}" 2>&1
-EXIT_CODE=$?
+    # Use absolute path to Python, capture all output
+    /usr/bin/python3 ${PYTHON_SCRIPT} "$@" >> "${LOG_FILE}" 2>&1
+    EXIT_CODE=$?
 
-echo "Exit code: ${EXIT_CODE}" >> "${LOG_FILE}"
-echo "" >> "${LOG_FILE}"
+    echo "Exit code: ${EXIT_CODE}" >> "${LOG_FILE}"
+    echo "" >> "${LOG_FILE}"
+else
+    # Run without logging
+    /usr/bin/python3 ${PYTHON_SCRIPT} "$@" >/dev/null 2>&1
+    EXIT_CODE=$?
+fi
 
 exit ${EXIT_CODE}
