@@ -6,10 +6,45 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from collections import deque
 import pandas as pd
+from logging.handlers import RotatingFileHandler
 
 from .context_builder import ContextBuilder
 from .prompts import get_analysis_prompt
 from .response_parser import ResponseParser
+
+
+def _setup_llm_file_logger() -> logging.Logger:
+    """Setup a dedicated file logger for LLM operations."""
+    logger = logging.getLogger('llm_file_logger')
+    
+    # Avoid adding multiple handlers if already configured
+    if logger.handlers:
+        return logger
+    
+    logger.setLevel(logging.DEBUG)
+    
+    # Log file in the llm folder
+    log_path = Path(__file__).parent / 'llm.log'
+    
+    # Rotating file handler: 5MB max, keep 3 backups
+    file_handler = RotatingFileHandler(
+        log_path,
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+        encoding='utf-8'
+    )
+    file_handler.setLevel(logging.DEBUG)
+    
+    # Detailed format for debugging
+    formatter = logging.Formatter(
+        '%(asctime)s | %(levelname)-8s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(formatter)
+    
+    logger.addHandler(file_handler)
+    
+    return logger
 
 
 class LLMAnalyzer:
@@ -21,9 +56,13 @@ class LLMAnalyzer:
             config_path: Path to llm_config.json. If None, uses default location.
         """
         self.logger = logging.getLogger('wodle-tpr.llm')
+        self.file_logger = _setup_llm_file_logger()
 
         if config_path is None:
             config_path = Path(__file__).parent / 'llm_config.json'
+
+        self._log(f"=== LLM Analyzer Initializing ===")
+        self._log(f"Config path: {config_path}")
 
         self.config = self._load_config(config_path)
         self.enabled = self.config.get('enabled', False)
@@ -34,11 +73,23 @@ class LLMAnalyzer:
         self.timeout = self.config.get('timeout_seconds', 30)
         self.temperature = self.config.get('temperature', 0.2)
 
+        # Log configuration values
+        self._log(f"Enabled: {self.enabled}")
+        self._log(f"Provider: {self.provider}")
+        self._log(f"Model: {self.model}")
+        self._log(f"Trigger window: {self.trigger_window} min")
+        self._log(f"Max tokens: {self.max_tokens}")
+        self._log(f"Timeout: {self.timeout}s")
+        self._log(f"Temperature: {self.temperature}")
+
         # Rate limiting configuration
         self.max_calls_per_hour = self.config.get('rate_limit', {}).get('max_calls_per_hour', 100)
         self.max_calls_per_day = self.config.get('rate_limit', {}).get('max_calls_per_day', 1000)
         self.max_retries = self.config.get('retry', {}).get('max_retries', 3)
         self.retry_backoff_base = self.config.get('retry', {}).get('backoff_seconds', 2)
+
+        self._log(f"Rate limit: {self.max_calls_per_hour}/hour, {self.max_calls_per_day}/day")
+        self._log(f"Retries: {self.max_retries}, backoff base: {self.retry_backoff_base}s")
 
         # Rate limiting state
         self._call_history = deque()
@@ -49,6 +100,15 @@ class LLMAnalyzer:
         self.response_parser = ResponseParser()
 
         self._client = None
+        
+        self._log(f"=== LLM Analyzer Ready (enabled={self.enabled}) ===")
+
+    def _log(self, message: str, level: str = 'info'):
+        """Log to both standard logger and file logger."""
+        log_func = getattr(self.logger, level, self.logger.info)
+        file_log_func = getattr(self.file_logger, level, self.file_logger.info)
+        log_func(message)
+        file_log_func(message)
 
     def _load_config(self, config_path: Path) -> dict:
         """Load configuration from JSON file."""
@@ -56,7 +116,7 @@ class LLMAnalyzer:
             with open(config_path, 'r') as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            self.logger.warning(f"Failed to load LLM config: {e}")
+            self.file_logger.warning(f"Failed to load LLM config: {e}")
             return {'enabled': False}
 
     def _get_client(self):
@@ -68,7 +128,7 @@ class LLMAnalyzer:
         api_key = os.getenv(api_key_env)
 
         if not api_key:
-            self.logger.error(f"API key not found in environment variable: {api_key_env}")
+            self._log(f"API key not found in environment variable: {api_key_env}", 'error')
             return None
 
         try:
@@ -80,10 +140,10 @@ class LLMAnalyzer:
                 self._client = OpenAI(api_key=api_key)
             return self._client
         except ImportError as e:
-            self.logger.error(f"LLM package not installed: {e}")
+            self._log(f"LLM package not installed: {e}", 'error')
             return None
         except Exception as e:
-            self.logger.error(f"Failed to initialize LLM client: {e}")
+            self._log(f"Failed to initialize LLM client: {e}", 'error')
             return None
 
     def _check_rate_limit(self) -> bool:
@@ -99,11 +159,11 @@ class LLMAnalyzer:
         if now >= self._daily_reset_time:
             self._daily_calls = 0
             self._daily_reset_time = now + timedelta(days=1)
-            self.logger.info("Daily LLM call counter reset")
+            self._log("Daily LLM call counter reset")
 
         # Check daily limit
         if self._daily_calls >= self.max_calls_per_day:
-            self.logger.warning(f"Daily rate limit exceeded: {self._daily_calls}/{self.max_calls_per_day}")
+            self._log(f"Daily rate limit exceeded: {self._daily_calls}/{self.max_calls_per_day}", 'warning')
             return False
 
         # Clean old entries (older than 1 hour)
@@ -113,7 +173,7 @@ class LLMAnalyzer:
 
         # Check hourly limit
         if len(self._call_history) >= self.max_calls_per_hour:
-            self.logger.warning(f"Hourly rate limit exceeded: {len(self._call_history)}/{self.max_calls_per_hour}")
+            self._log(f"Hourly rate limit exceeded: {len(self._call_history)}/{self.max_calls_per_hour}", 'warning')
             return False
 
         return True
@@ -131,10 +191,10 @@ class LLMAnalyzer:
         Logs of the trigger_window (default 10 min) are sent to the LLM.
         """
         entity_id = anomaly_result.get('entity_id', 'unknown') if anomaly_result else 'none'
-        self.logger.info(f"LLM should_analyze called for entity {entity_id}")
+        self._log(f"LLM should_analyze called for entity {entity_id}")
 
         if not self.enabled:
-            self.logger.info(f"LLM disabled, skipping entity {entity_id}")
+            self._log(f"LLM disabled, skipping entity {entity_id}")
             return False
 
         if not anomaly_result:
@@ -143,15 +203,15 @@ class LLMAnalyzer:
         risk_score = anomaly_result.get('risk_score', 0.0)
         min_risk_score = self.config.get('min_risk_score_for_analysis', 0.6)
 
-        self.logger.info(
+        self._log(
             f"LLM check for entity {entity_id}: risk={risk_score:.2%} (need >={min_risk_score:.2%})"
         )
 
         if risk_score < min_risk_score:
-            self.logger.info(f"LLM skipped for entity {entity_id}: risk too low ({risk_score:.2%} < {min_risk_score:.2%})")
+            self._log(f"LLM skipped for entity {entity_id}: risk too low ({risk_score:.2%} < {min_risk_score:.2%})")
             return False
 
-        self.logger.info(f"LLM TRIGGERED for entity {entity_id}! (risk={risk_score:.2%})")
+        self._log(f"LLM TRIGGERED for entity {entity_id}! (risk={risk_score:.2%})")
         return True
 
     def analyze(self, entity_id: str, anomaly_result: dict,
@@ -173,7 +233,7 @@ class LLMAnalyzer:
 
         # Check rate limit
         if not self._check_rate_limit():
-            self.logger.warning(f"Rate limit exceeded, skipping LLM analysis for {entity_id}")
+            self._log(f"Rate limit exceeded, skipping LLM analysis for {entity_id}", 'warning')
             return self._create_error_result(entity_id, "Rate limit exceeded")
 
         start_time = datetime.utcnow()
@@ -185,7 +245,7 @@ class LLMAnalyzer:
                 window_start = start_time - timedelta(minutes=self.trigger_window)
                 filtered_df = entity_df[entity_df['@timestamp'] >= window_start].copy()
                 if filtered_df.empty:
-                    self.logger.warning(f"No logs found in {self.trigger_window}min window for {entity_id}")
+                    self._log(f"No logs found in {self.trigger_window}min window for {entity_id}", 'warning')
                     filtered_df = entity_df  # Fallback to full df if no logs in window
             else:
                 filtered_df = entity_df
@@ -201,9 +261,11 @@ class LLMAnalyzer:
             context_text = self.context_builder.format_for_prompt(context)
             prompt = get_analysis_prompt(context_text)
 
+            self._log(f"Calling LLM for entity {entity_id} with {len(context.get('logs', []))} logs")
             llm_response = self._call_llm(prompt)
 
             if llm_response is None:
+                self._log(f"LLM call returned None for entity {entity_id}", 'error')
                 return self._create_error_result(entity_id, "LLM call failed")
 
             parsed = self.response_parser.parse(llm_response)
@@ -219,15 +281,15 @@ class LLMAnalyzer:
                 **parsed
             }
 
-            self.logger.info(
+            self._log(
                 f"LLM analysis complete for {entity_id}: "
-                f"{parsed.get('classification')} ({parsed.get('confidence')})"
+                f"{parsed.get('classification')} ({parsed.get('confidence')}) in {elapsed_ms}ms"
             )
 
             return result
 
         except Exception as e:
-            self.logger.error(f"LLM analysis failed for {entity_id}: {e}")
+            self._log(f"LLM analysis failed for {entity_id}: {e}", 'error')
             return self._create_error_result(entity_id, str(e))
 
     def _call_llm(self, prompt: str) -> str:
@@ -240,12 +302,15 @@ class LLMAnalyzer:
         Returns:
             LLM response text or None on failure
         """
+        self._log("Getting LLM client...")
         client = self._get_client()
         if client is None:
+            self._log("Failed to get LLM client", 'error')
             return None
 
         last_error = None
         for attempt in range(self.max_retries):
+            self._log(f"LLM API call attempt {attempt + 1}/{self.max_retries}")
             try:
                 if self.provider == 'anthropic':
                     # Anthropic SDK doesn't support timeout directly in the call
@@ -288,6 +353,7 @@ class LLMAnalyzer:
 
                 # Record successful call
                 self._record_call()
+                self._log(f"LLM API call successful, response length: {len(result)} chars")
                 return result
 
             except Exception as e:
@@ -300,13 +366,14 @@ class LLMAnalyzer:
 
                 if attempt < self.max_retries - 1 and is_retryable:
                     backoff_time = self.retry_backoff_base ** (attempt + 1)
-                    self.logger.warning(
+                    self._log(
                         f"LLM API call failed (attempt {attempt + 1}/{self.max_retries}): {error_type}. "
-                        f"Retrying in {backoff_time}s..."
+                        f"Retrying in {backoff_time}s...",
+                        'warning'
                     )
                     time.sleep(backoff_time)
                 else:
-                    self.logger.error(f"LLM API call failed after {attempt + 1} attempts: {e}")
+                    self._log(f"LLM API call failed after {attempt + 1} attempts: {e}", 'error')
                     break
 
         return None
