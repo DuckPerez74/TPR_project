@@ -10,16 +10,32 @@ import re
 # ==========================
 
 API_URL = [
+    # Endpoints normais/legítimos
     "https://api.infraspeak.com/v3/elements",
     "https://api.infraspeak.com/v3/locals/all",
     "https://api.infraspeak.com/v3/operators",
-    "https://api.infraspeak.com/v3/events"
+    "https://api.infraspeak.com/v3/events",
+    
+    # Endpoints sensíveis (típicos de scanning/pentesting)
+    "https://api.infraspeak.com/v3/admin",
+    "https://api.infraspeak.com/v3/admin/users",
+    "https://api.infraspeak.com/v3/admin/settings",
+    "https://api.infraspeak.com/v3/config",
+    "https://api.infraspeak.com/v3/backup",
+    "https://api.infraspeak.com/v3/export",
+    "https://api.infraspeak.com/v3/reports/financial",
+    "https://api.infraspeak.com/v3/billing",
+    "https://api.infraspeak.com/v3/users/password",
+    "https://api.infraspeak.com/admin",
+    "https://api.infraspeak.com/.env",
+    "https://api.infraspeak.com/api/v1/users",
+    "https://api.infraspeak.com/phpinfo.php",
 ]
 
 # Lista de BEARER_TOKEN é deixada vazia por segurança; use --tokens-file para carregar tokens a partir de `access_tokens.txt`.
 BEARER_TOKEN = [
     "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiIxIiwianRpIjoiMTEyMWQ4ODJiMTNhMWNjYmI3MGY2ZGEwZTRiOTdlY2YzMDE1MTY5MzVkOTM1NTMwYmJiY2UzZDI0NjM2NTAwNDNiZmE0YmEwMTczMTBlYmYiLCJpYXQiOjE3NjYwMzQyMzQsIm5iZiI6MTc2NjAzNDIzNCwiZXhwIjoxNzcxMjE4MjM0LCJzdWIiOiIyNjgxNCIsInNjb3BlcyI6WyIqIl0sInV0eXBlIjoiT1BFUkFUT1IiLCJ1dHlwZV9pZCI6MjExMzgsIm5hbWUiOiJEYW5pZWwgQWRtaW4gMjE0IiwiZW1haWwiOiJkYW5pZWwubWFjaWVsK2FkbWluMjE0QGluZnJhc3BlYWsuY29tIiwiem9uZWluZm8iOiJFdXJvcGUvTGlzYm9uIn0.aZ8Xx7iFfOuwWb9asmp99PE_0RAvNcVEvUqklyP-9KyU7E-lfwatwqede_zSyiWrQJyC-RGpAfAM_pg5Pkz6hPXJYztlVfcgLcIdCJ87MVU021pRqdToXCbzaLWH-EoX26Uu3ZdaeKnCcDJF2zbguS2SjFYpJYiK5pHEJr14U920sh-oqBA-V5hXnafpvlLx1hhtE84b493E3zsHLLcF_y1cGqW37h65-FPzh-5wMU3VRGOZ3MVnNlifK9ebzsl3Fg60tYZqBgfqTm_rzegVwOohiA_e4tH5_8tKa68dZi93bzs0BtL7Ci7yKMJpbUEbmvsFV7i1_CJdJ1bNW15Bd9iqQovyGorbxhuSMPoDoeNtU1s6EyGkUqKkIlqOPze32SsolRNRYePZlg01HoDENBJyv6-lecOykRwGo_KOImVP8TwRni9TxwYX82RXzkszexSOpkb-WdhP3d-Pn__QyExTFGtsDTWmMjA6iC3SkZo32yTOplr8edB1w3ViwpDMXDovk01dU_VXj_yk94psHe9qm4c1gYdgkMFD3kjAN8d4d4xvWdyz5CPVQnOqH1CykhFCLlSM3jD41KMRrqQsXLo8xo8sxMGxOAT66Yd2WCTb6nxhJkU4no61tjqM5UyON2ElrMrTLHVHn5aJtlJz1mfrHOxXqNIJ-BACEIslYxg",
-    "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiIzMjYiLCJqdGkiOiJhMmIyNTYyNzYxMWMwZTE2NDk4YWE2NjUzOWFjODhiNzcyYmNlYTZiOWYzYWQwY2YwYTkxOWE1MzNiMWFjMGYxODg2MjA1OWM3MTFjZjMzZCIsImlhdCI6MTc2NjAzNzA0NywibmJmIjoxNzY2MDM3MDQ3LCJleHAiOjE3NzEyMjEwNDcsInN1YiI6IjcyNzExIiwic2NvcGVzIjpbIioiXSwidXR5cGUiOiJPUEVSQVRPUiIsInV0eXBlX2lkIjo2MzQ4MCwibmFtZSI6IlRoYWlzIE5ldG8iLCJlbWFpbCI6InRoYWlzLm5ldG8rdGVjaG5pY2lhbjIxNEBpbmZyYXNwZWFrLmNvbSIsInpvbmVpbmZvIjoiRXVyb3BlL0xvbmRvbiJ9.oJvbERpSAa6h4u_67mEXtXPDQZnZHFB-ijk8J5zJXaxeNCXs_5Gw28wqTPICu-sRfYZScp8Jvfhrr3l1gE59xqsX16u0omS1l0BoJZisJbU4Wu-0-9UZMG-X5RoZfh4ZAo06quiF9F3AS_mCyZ-WDrpuT2Rx1WKSi422g6IArEjrBFVRgoj1CRz5Xr9cYCfPO_ohvguBU32NNIqmLVWAggxxxQd2JezsZtc_vdlP6EIWZLhBAf962ONEDGXcLioUT_FmPH-TO_nSrRB1TRwGOUwCAnyc4IJXF3jXb9QD_qdpiUAaLcE5cAhdJSraig299l2GRQ8JUoWPrOCU7FqT9JlYN2wKl8kf1oCYl00Y1zpXnk4dsKL3NUPv1A-vIM3SDazQJAfeHSMPIPSJrrYf3KhsZK4YJplZrQI3uCUVwk8_A4X0IxpZ2Ci7_i3Jy584t3pt3edqCD-5UdYWdtWebPr_xz2G96OP00tCXAK15Zif4hQfCNCIgnE0Ze9r5jDR_tQ2bC0mmL8DCy9CU-5sZQgGPBXWH-QiWP-_n3TS_WnojTkgkHVvJY_yySzQESf6ujvOqOGujsM-yat7ShUb9vjdZvUd-C1dCJwYEz4ZkF7yyIhE1k4dvlR-qWIJMNQ_cabdcbfBN2mzPX4ZydpZYWh7g-UQH1yzpExhMvMLE"
+    "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiIzMjYiLCJqdGkiOiJhMmIyNTYyNzYxMWMwZTE2NDk4YWE2NjUzOWFjODhiNzcyYmNlYTZiOWYzYWQwY2YwYTkxOWE1MzNiMWFjMGYxODg2MjA1OWM3MTFjZjMzZCIsImlhdCI6MTc2NjAzNzA0NywibmJmIjoxNzY2MDM3MDQ3LCJleHAiOjE3NzEyMjEwNDcsInN1YiI6IjcyNzExIiwic2NvcGVzIjpbIioiXSwidXR5cGUiOiJPUEVSQVRPUiIsInV0eXBlX2lkIjo2MzQ4MCwibmFtZSI6IlRoYWlzIE5ldG8iLCJlbWFpbCI6InRoYWlzLm5ldG8rdGVjaG5pY2lhbjIxNEBpbmfraspeak.comIiwiem9uZWluZm8iOiJFdXJvcGUvTG9uZG9uIn0.oJvbERpSAa6h4u_67mEXtXPDQZnZHFB-ijk8J5zJXaxeNCXs_5Gw28wqTPICu-sRfYZScp8Jvfhrr3l1gE59xqsX16u0omS1l0BoJZisJbU4Wu-0-9UZMG-X2RoZfh4ZAo06quiF9F3AS_mCyZ-WDrpuT2Rx1WKSi422g6IArEjrBFVRgoj1CRz5Xr9cYCfPO_ohvguBU32NNIqmLVWAggxxxQd2JezsZtc_vdlP6EIWZLhBAf962ONEDGXcLioUT_FmPH-TO_nSrRB1TRwGOUwCAnyc4IJXF3jXb9QD_qdpiUAaLcE5cAhdJSraig299l2GRQ8JUoWPrOCU7FqT9JlYN2wKl8kf1oCYl00Y1zpXnk4dsKL3NUPv1A-vIM3SDazQJAfeHSMPIPSJrrYf3KhsZK4YJplZrQI3uCUVwk8_A4X0IxpZ2Ci7_i3Jy584t3pt3edqCD-5UdYWdtWebPr_xz2G96OP00tCXAK15Zif4hQfCNCIgnE0Ze9r5jDR_tQ2bC0mmL8DCy9CU-5sZQgGPBXWH-QiWP-_n3TS_WnojTkgkHVvJY_yySzQESf6ujvOqOGujsM-yat7ShUb9vjdZvUd-C1dCJwYEz4ZkF7yyIhE1k4dvlR-qWIJMNQ_cabdcbfBN2mzPX4ZydpZYWh7g-UQH1yzpExhMvMLE"
 ]
 
 USER_AGENTS = [
@@ -116,15 +132,45 @@ def make_request(urls, tokens, user_agents, mix_ua=False, timeout=15, show_heade
     url = random.choice(urls)
     token = random.choice(tokens) if isinstance(tokens, (list, tuple)) and tokens else generate_fake_jwt()
     ua = random_user_agent(user_agents, mix=mix_ua)
+    
+    # Variar métodos HTTP para simular scanning/pentesting
+    method = random.choices(
+        ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+        weights=[50, 20, 15, 10, 5],  # GET mais comum, mas há variação
+        k=1
+    )[0]
 
+    # Headers base
     headers = {
         "Authorization": f"Bearer {token}",
         "User-Agent": ua,
         "Accept": "application/json",
         "Content-Type": "application/json"
     }
+    
+    # Headers suspeitos adicionais (aleatoriamente)
+    if random.random() < 0.3:  # 30% das requests
+        suspicious_headers = {
+            "X-Forwarded-For": f"{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}",
+            "X-Scanner": "security-audit",
+            "X-Penetration-Test": "active",
+        }
+        headers.update(suspicious_headers)
+
+    # Payload suspeito para métodos de mutação
+    payload = None
+    if method in ['POST', 'PUT', 'PATCH']:
+        payloads = [
+            {"test": "' OR 1=1--", "admin": True},
+            {"username": "admin' OR '1'='1", "password": "x"},
+            {"id": "../../../etc/passwd"},
+            {"search": "<script>alert('xss')</script>"},
+            {"cmd": "cat /etc/passwd"},
+        ]
+        payload = random.choice(payloads)
 
     print(f"URL: {url}")
+    print(f"Method: {method}")
     print(f"User-Agent usado: {ua}")
 
     # Mostrar headers conforme opção (mask por defeito)
@@ -137,7 +183,16 @@ def make_request(urls, tokens, user_agents, mix_ua=False, timeout=15, show_heade
         print("Headers:", h)
 
     try:
-        response = requests.get(url, headers=headers, timeout=timeout)
+        if method == 'GET':
+            response = requests.get(url, headers=headers, timeout=timeout)
+        elif method == 'POST':
+            response = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        elif method == 'PUT':
+            response = requests.put(url, headers=headers, json=payload, timeout=timeout)
+        elif method == 'DELETE':
+            response = requests.delete(url, headers=headers, timeout=timeout)
+        else:  # PATCH
+            response = requests.patch(url, headers=headers, json=payload, timeout=timeout)
     except Exception as e:
         print(f"Erro na request: {e}")
         return None

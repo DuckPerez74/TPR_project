@@ -211,10 +211,25 @@ class EntityProcessor:
             )
 
             llm_result = self.llm_analyzer.analyze(entity_id, anomaly_result, metrics, entity_df)
+            
+            # Debug: log what we got back
+            if llm_result:
+                has_error = llm_result.get('error')
+                classification = llm_result.get('classification', 'N/A')
+                print(f"LLM result for {entity_id}: classification={classification}, error={has_error}", flush=True)
+            else:
+                print(f"LLM result for {entity_id} is None!", flush=True)
 
             if llm_result and not llm_result.get('error'):
                 # Update the existing alert document in OpenSearch with LLM analysis
+                print(f"Calling update_alert_with_llm for entity {entity_id}, alert_id={alert_id}", flush=True)
                 self.logger.update_alert_with_llm(alert_id, llm_result)
+                print(f"update_alert_with_llm completed for entity {entity_id}", flush=True)
+            else:
+                print(f"Skipping update_alert_with_llm: llm_result={llm_result is not None}, error={llm_result.get('error') if llm_result else 'N/A'}", flush=True)
 
         except Exception as e:
+            import traceback
+            print(f"Exception in _run_llm_analysis: {e}", flush=True)
+            traceback.print_exc()
             self.logger.log_error(f"LLM analysis failed for entity {entity_id}", e)

@@ -209,10 +209,7 @@ class WazuhLogger:
                 'triggers': triggers,
                 
                 # Top impacted (for quick investigation)
-                'top_impacts': top_impacts if top_impacts else None,
-                
-                # Drill-down query
-                'details_query': f"entity_id:{entity_id} AND @timestamp:[now-{selected_window}m TO now]"
+                'top_impacts': top_impacts if top_impacts else None
             }
         }
         
@@ -297,6 +294,9 @@ class WazuhLogger:
         Returns:
             True if update successful, False otherwise
         """
+        entity_id = llm_result.get('entity_id', 'unknown')
+        self.logger.info(f"Updating alert {alert_id} with LLM result for entity {entity_id}")
+        
         try:
             from core.opensearch_client import OpenSearchClient
             client = OpenSearchClient.get_instance()
@@ -318,19 +318,24 @@ class WazuhLogger:
             # Search in recent wazuh-alerts indices
             today = datetime.utcnow().strftime("%Y.%m.%d")
             index_pattern = f"wazuh-alerts-4.x-{today}"
+            
+            self.logger.info(f"Searching for alert_id {alert_id} in index {index_pattern}")
 
             response = client.search(index=index_pattern, body=search_body)
             hits = response.get('hits', {}).get('hits', [])
+            
+            self.logger.info(f"Search returned {len(hits)} hits for alert_id {alert_id}")
 
             if not hits:
-                self.logger.warning(f"Could not find alert document for alert_id: {alert_id}")
+                self.logger.warning(f"Could not find alert document for alert_id: {alert_id}, sending via fallback")
                 # Fallback: send as separate log via Wazuh socket
-                entity_id = llm_result.get('entity_id', 'unknown')
                 self.log_llm_analysis(entity_id, llm_result, alert_id)
                 return False
 
             doc_id = hits[0]['_id']
             doc_index = hits[0]['_index']
+            
+            self.logger.info(f"Found document {doc_id} in {doc_index} for alert_id {alert_id}")
 
             # Build LLM analysis update
             llm_analysis = {
@@ -365,6 +370,8 @@ class WazuhLogger:
             }
 
             client.update(index=doc_index, id=doc_id, body=update_body)
+            
+            self.logger.info(f"Successfully updated OpenSearch document {doc_id} with LLM analysis for entity {entity_id}")
 
             self.logger.info(json.dumps({
                 'timestamp': datetime.utcnow().isoformat() + 'Z',
@@ -377,9 +384,8 @@ class WazuhLogger:
             return True
 
         except Exception as e:
-            self.logger.error(f"Failed to update alert with LLM analysis: {e}")
+            self.logger.error(f"Failed to update alert with LLM analysis for entity {entity_id}: {e}")
             # Fallback: send as separate log
-            entity_id = llm_result.get('entity_id', 'unknown')
             self.log_llm_analysis(entity_id, llm_result, alert_id)
             return False
 
