@@ -54,12 +54,6 @@ def _setup_llm_file_logger(enabled: bool = True) -> logging.Logger:
 
 class LLMAnalyzer:
     def __init__(self, config_path: str = None):
-        """
-        Initialize LLM Analyzer.
-
-        Args:
-            config_path: Path to llm_config.json. If None, uses default location.
-        """
         self.logger = logging.getLogger('wodle-tpr.llm')
         
         # Load main config to check enable_file_logging
@@ -166,12 +160,6 @@ class LLMAnalyzer:
             return None
 
     def _check_rate_limit(self) -> bool:
-        """
-        Check if we're within rate limits.
-
-        Returns:
-            True if call is allowed, False if rate limit exceeded
-        """
         now = datetime.now()
 
         # Reset daily counter if needed
@@ -203,12 +191,6 @@ class LLMAnalyzer:
         self._daily_calls += 1
 
     def should_analyze(self, anomaly_result: dict) -> bool:
-        """
-        Determine if LLM analysis should run for this anomaly.
-        
-        Triggers when risk_score >= min_risk_score (default 60%).
-        Logs of the trigger_window (default 10 min) are sent to the LLM.
-        """
         entity_id = anomaly_result.get('entity_id', 'unknown') if anomaly_result else 'none'
         self._log(f"LLM should_analyze called for entity {entity_id}")
 
@@ -235,18 +217,6 @@ class LLMAnalyzer:
 
     def analyze(self, entity_id: str, anomaly_result: dict,
                 metrics: dict, entity_df: pd.DataFrame) -> dict:
-        """
-        Perform LLM analysis on anomaly alert.
-
-        Args:
-            entity_id: Entity identifier
-            anomaly_result: Result from HierarchicalAnalyzer
-            metrics: Current metrics snapshot
-            entity_df: DataFrame with entity logs
-
-        Returns:
-            Analysis result dictionary
-        """
         if not self.should_analyze(anomaly_result):
             return None
 
@@ -314,15 +284,6 @@ class LLMAnalyzer:
             return self._create_error_result(entity_id, str(e))
 
     def _call_llm(self, prompt: str) -> str:
-        """
-        Call LLM API with prompt, including retry logic with exponential backoff.
-
-        Args:
-            prompt: Complete prompt string
-
-        Returns:
-            LLM response text or None on failure
-        """
         self._log("Getting LLM client...")
         client = self._get_client()
         if client is None:

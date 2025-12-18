@@ -11,20 +11,10 @@ class MetricsStorage:
         self.max_buffer_size = config.get('performance', {}).get('metrics_buffer_size', 1000)
 
     def _get_index_name(self, timestamp: datetime) -> str:
-        """
-        Generate monthly index name based on metric timestamp.
-
-        Args:
-            timestamp: The timestamp of the metric (from the log data)
-
-        Returns:
-            Index name like 'metrics-tpr-2025-11'
-        """
         month_str = timestamp.strftime('%Y-%m')
         return f"{self.base_index_name}-{month_str}"
 
     def _ensure_index_exists(self, index_name: str):
-        """Ensure the specified index exists, create if missing."""
         try:
             if not self.client.indices.exists(index=index_name):
                 self.client.indices.create(index=index_name)
@@ -33,16 +23,6 @@ class MetricsStorage:
             print(f"ERROR: Failed to create index {index_name}: {str(e)}", file=sys.stderr)
 
     def get_index_pattern(self, timestamp: datetime = None, months_back: int = 0) -> str:
-        """
-        Get index pattern for querying multiple months.
-
-        Args:
-            timestamp: Reference timestamp (default: now)
-            months_back: Number of months to include (0 = specific month only, >0 = use wildcard)
-
-        Returns:
-            Index pattern like 'metrics-tpr-2025-01' or 'metrics-tpr-*' for multiple months
-        """
         if months_back == 0:
             if timestamp is None:
                 timestamp = datetime.now()
@@ -105,11 +85,6 @@ class MetricsStorage:
 
 
     def save_metrics_bulk(self, metrics_list: List[Dict]):
-        """
-        Save a large list of metrics using OpenSearch bulk API.
-        Generates deterministic IDs for idempotency.
-        Groups metrics by month to route to correct indices.
-        """
         if not metrics_list:
             return
 

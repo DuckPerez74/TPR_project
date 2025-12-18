@@ -34,23 +34,8 @@ class ModelAssignment:
 
 
 class ModelAssignmentCache:
-    """
-    Persistent cache for entity-to-model assignments.
-
-    This cache stores which model (entity-specific or cluster) should be used for each entity,
-    avoiding repeated cluster predictions and WindowBuffer queries.
-
-    Entity models never expire. Cluster assignments expire after cluster_ttl_days.
-    """
-
     def __init__(self, db_path: str, cluster_ttl_days: int = 7):
-        """
-        Initialize the cache.
 
-        Args:
-            db_path: Path to SQLite database file
-            cluster_ttl_days: Days until cluster assignments expire (default: 7)
-        """
         self.db_path = Path(db_path)
         self.cluster_ttl_days = cluster_ttl_days
         self._init_db()
@@ -60,7 +45,6 @@ class ModelAssignmentCache:
               file=sys.stderr)
 
     def _init_db(self):
-        """Initialize database schema."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         with sqlite3.connect(self.db_path) as conn:
@@ -102,15 +86,6 @@ class ModelAssignmentCache:
             conn.commit()
 
     def get(self, entity_id: str) -> Optional[ModelAssignment]:
-        """
-        Get model assignment for entity.
-
-        Args:
-            entity_id: Entity identifier
-
-        Returns:
-            ModelAssignment if found and not expired, None otherwise
-        """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("""
                 SELECT assigned_model, model_type, cluster_id,
@@ -152,14 +127,6 @@ class ModelAssignmentCache:
             return assignment
 
     def set_entity_model(self, entity_id: str, model_name: str, model_exists: bool = True):
-        """
-        Assign entity-specific model (never expires).
-
-        Args:
-            entity_id: Entity identifier
-            model_name: Model name (e.g., 'entity_125')
-            model_exists: Whether the model file exists on disk
-        """
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO model_assignments
@@ -175,15 +142,6 @@ class ModelAssignmentCache:
 
     def set_cluster_model(self, entity_id: str, cluster_id: int, confidence: Optional[float] = None,
                           model_exists: bool = True):
-        """
-        Assign cluster model (expires in cluster_ttl_days).
-
-        Args:
-            entity_id: Entity identifier
-            cluster_id: Cluster ID (0, 1, or 2)
-            confidence: Optional prediction confidence score
-            model_exists: Whether the model file exists on disk
-        """
         model_name = f"cluster_{cluster_id}"
         expires_at = datetime.utcnow() + timedelta(days=self.cluster_ttl_days)
 
@@ -204,23 +162,11 @@ class ModelAssignmentCache:
               file=sys.stderr)
 
     def delete(self, entity_id: str):
-        """
-        Remove assignment for entity.
-
-        Args:
-            entity_id: Entity identifier
-        """
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM model_assignments WHERE entity_id = ?", (entity_id,))
             conn.commit()
 
     def clear_expired(self) -> int:
-        """
-        Remove all expired assignments.
-
-        Returns:
-            Number of assignments deleted
-        """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("""
                 DELETE FROM model_assignments
@@ -247,12 +193,6 @@ class ModelAssignmentCache:
               file=sys.stderr)
 
     def get_stats(self) -> Dict:
-        """
-        Get cache statistics.
-
-        Returns:
-            Dictionary with cache statistics
-        """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("""
                 SELECT
@@ -283,12 +223,6 @@ class ModelAssignmentCache:
             }
 
     def get_cluster_distribution(self) -> Dict[int, int]:
-        """
-        Get distribution of entities across clusters.
-
-        Returns:
-            Dictionary mapping cluster_id to count
-        """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("""
                 SELECT cluster_id, COUNT(*)
@@ -301,15 +235,6 @@ class ModelAssignmentCache:
             return {int(row[0]): row[1] for row in cursor.fetchall() if row[0] is not None}
 
     def get_top_entities(self, limit: int = 10) -> list:
-        """
-        Get entities with most cache hits.
-
-        Args:
-            limit: Maximum number of entities to return
-
-        Returns:
-            List of tuples (entity_id, assigned_model, hit_count)
-        """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("""
                 SELECT entity_id, assigned_model, hit_count
@@ -321,12 +246,6 @@ class ModelAssignmentCache:
             return cursor.fetchall()
 
     def sync_from_disk(self, model_loader):
-        """
-        Synchronize cache with models that exist on disk.
-
-        Args:
-            model_loader: ModelLoader instance to check which models exist
-        """
         from pathlib import Path
 
         added_count = 0

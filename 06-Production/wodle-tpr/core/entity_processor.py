@@ -1,9 +1,3 @@
-"""
-Entity processor for metrics calculation, detection, and analysis.
-
-This module simplifies the main processing loop by extracting entity-level
-operations into a dedicated class with clear separation of concerns.
-"""
 from datetime import datetime
 from typing import Dict, Optional
 import pandas as pd
@@ -11,28 +5,10 @@ from utils import get_time_range
 
 
 class EntityProcessor:
-    """
-    Handles processing of a single entity: metrics calculation, detection, and LLM analysis.
-
-    This class encapsulates the multi-step processing pipeline to keep main.py cleaner
-    and improve testability.
-    """
 
     def __init__(self, scheduler, l1_calc, l2_calc, storage, detector,
                  analyzer, logger, llm_analyzer=None):
-        """
-        Initialize entity processor with required components.
 
-        Args:
-            scheduler: Scheduler instance for timing decisions
-            l1_calc: L1 metrics calculator
-            l2_calc: L2 metrics calculator
-            storage: Metrics storage
-            detector: Anomaly detector
-            analyzer: Hierarchical analyzer
-            logger: Wazuh logger
-            llm_analyzer: Optional LLM analyzer
-        """
         self.scheduler = scheduler
         self.l1_calc = l1_calc
         self.l2_calc = l2_calc
@@ -47,20 +23,7 @@ class EntityProcessor:
 
     def process(self, entity_id: str, entity_df: pd.DataFrame, current_time: datetime,
                 shutdown_flag, detection_enabled: bool, scheduling_minute: int = None) -> bool:
-        """
-        Process entity: calculate metrics, detect anomalies, run LLM analysis.
 
-        Args:
-            entity_id: Entity identifier
-            entity_df: DataFrame with entity logs
-            current_time: Current processing time
-            shutdown_flag: Graceful shutdown flag
-            detection_enabled: Whether to run detection
-            scheduling_minute: Optional overridden minute for scheduling
-
-        Returns:
-            True if anomaly was detected, False otherwise
-        """
         if not shutdown_flag.should_continue():
             return False
 
@@ -85,19 +48,6 @@ class EntityProcessor:
     def _calculate_metrics_for_windows(self, entity_id: str, entity_df: pd.DataFrame,
                                         current_time: datetime, current_minute: int,
                                         shutdown_flag) -> tuple:
-        """
-        Calculate L1 and L2 metrics for all observation windows.
-
-        Args:
-            entity_id: Entity identifier
-            entity_df: DataFrame with entity logs
-            current_time: Current processing time
-            current_minute: Minute for scheduling decisions
-            shutdown_flag: Graceful shutdown flag
-
-        Returns:
-            Tuple (l1_metrics_by_window, l2_metrics_by_window)
-        """
         l1_metrics_by_window = {}
         l2_metrics_by_window = {}
 
@@ -153,23 +103,6 @@ class EntityProcessor:
 
     def _run_detection_and_logging(self, entity_id: str, entity_df: pd.DataFrame,
                                     l1_metrics_by_window: Dict, l2_metrics_by_window: Dict) -> bool:
-        """
-        Run anomaly detection and log results.
-
-        Flow:
-        1. Run anomaly detection
-        2. Log alert immediately (with alert_id for correlation)
-        3. For critical alerts, run LLM async and update OpenSearch document
-
-        Args:
-            entity_id: Entity identifier
-            entity_df: DataFrame with entity logs
-            l1_metrics_by_window: L1 metrics by window
-            l2_metrics_by_window: L2 metrics by window
-
-        Returns:
-            True if anomaly detected, False otherwise
-        """
         try:
             result = self.analyzer.analyze(self.detector, entity_id, l1_metrics_by_window, l2_metrics_by_window)
 
@@ -192,16 +125,6 @@ class EntityProcessor:
 
     def _run_llm_analysis(self, entity_id: str, entity_df: pd.DataFrame, anomaly_result: Dict,
                           l1_metrics_by_window: Dict, alert_id: str) -> None:
-        """
-        Run LLM analysis on anomaly and update OpenSearch document.
-
-        Args:
-            entity_id: Entity identifier
-            entity_df: DataFrame with entity logs
-            anomaly_result: Anomaly detection result
-            l1_metrics_by_window: L1 metrics by window
-            alert_id: Alert identifier for finding document in OpenSearch
-        """
         try:
             # Use the configured trigger window for metrics
             trigger_window = self.llm_analyzer.trigger_window
@@ -211,8 +134,7 @@ class EntityProcessor:
             )
 
             llm_result = self.llm_analyzer.analyze(entity_id, anomaly_result, metrics, entity_df)
-            
-            # Debug: log what we got back
+
             if llm_result:
                 has_error = llm_result.get('error')
                 classification = llm_result.get('classification', 'N/A')

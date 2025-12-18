@@ -21,7 +21,6 @@ class AutoEncoder(nn.Module):
             nn.Linear(24, 16),
             nn.LeakyReLU(0.1),
             nn.Linear(16, encoding_dim),
-            # No activation on bottleneck to preserve full information
         )
 
         self.decoder = nn.Sequential(

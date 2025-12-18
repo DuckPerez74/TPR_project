@@ -10,7 +10,6 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from .autoencoder import AutoEncoder
 
-# Suppress PyTorch CUDA compatibility warnings (user is aware GPU may not be compatible)
 warnings.filterwarnings('ignore', category=UserWarning, module='torch.cuda')
 
 
@@ -23,8 +22,7 @@ class ModelTrainer:
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.epochs = epochs
-        # Use CPU when force_cpu=True (for parallel workers to avoid CUDA conflicts)
-        # Multiple processes accessing GPU simultaneously causes illegal memory access errors
+
         if force_cpu:
             self.device = torch.device('cpu')
         else:

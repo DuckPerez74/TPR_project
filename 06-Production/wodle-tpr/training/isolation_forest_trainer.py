@@ -76,15 +76,6 @@ class IsolationForestTrainer:
         return True
 
     def save_model(self, model_data, user_id, output_dir, entity_id=None):
-        """
-        Save Isolation Forest model to disk.
-        
-        Args:
-            model_data: Dict with 'model' and 'scaler'
-            user_id: User/Route identifier
-            output_dir: Output directory path
-            entity_id: Optional entity_id for route models (creates entity_route naming)
-        """
         if not self._is_valid_user_id(user_id):
             import sys
             print(f"ERROR: Cannot save model, invalid user_id: {user_id[:50]}", file=sys.stderr)

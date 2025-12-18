@@ -18,14 +18,6 @@ from data import LogFetcher, DataPreprocessor
 from metrics import L1MetricsCalculator, L2MetricsCalculator, MetricsStorage
 
 def process_chunk_by_entity(chunk_start, chunk_end, config):
-    """
-    OPTIMIZED: Worker function to process a time chunk by entity.
-
-    Instead of loading all logs at once, this:
-    1. Gets list of active entities (fast aggregation)
-    2. Processes each entity independently (low memory)
-    3. Allows many more parallel workers
-    """
     pid = os.getpid()
     print(f"[PID {pid}] Starting chunk: {chunk_start} to {chunk_end}")
 

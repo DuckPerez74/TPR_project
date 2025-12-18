@@ -7,21 +7,8 @@ from constants import L1_FEATURE_ORDER as FEATURE_ORDER
 
 
 class WindowBuffer:
-    """
-    Manages historical window data for entities to support aggregated cluster prediction.
-
-    This class fetches and caches recent metric windows from OpenSearch, maintaining
-    consistency with the training approach (using mean aggregation over multiple windows).
-    """
 
     def __init__(self, opensearch_client, config: dict):
-        """
-        Initialize WindowBuffer.
-
-        Args:
-            opensearch_client: OpenSearch client instance
-            config: Configuration dictionary with cluster_prediction settings
-        """
         self.client = opensearch_client
 
         cluster_config = config.get('detection', {}).get('cluster_prediction', {})
@@ -43,16 +30,6 @@ class WindowBuffer:
               file=sys.stderr)
 
     def get_recent_windows(self, entity_id: str, observation_window: int = 60) -> Optional[np.ndarray]:
-        """
-        Get recent metric windows for an entity.
-
-        Args:
-            entity_id: Entity identifier
-            observation_window: Window size in minutes (default: 60)
-
-        Returns:
-            np.ndarray of shape (n_windows, n_features) or None if insufficient data
-        """
         if not self.enabled:
             return None
 
@@ -108,16 +85,6 @@ class WindowBuffer:
         }
 
     def _fetch_from_opensearch(self, entity_id: str, observation_window: int) -> Optional[np.ndarray]:
-        """
-        Fetch recent windows from OpenSearch.
-
-        Args:
-            entity_id: Entity identifier
-            observation_window: Window size in minutes
-
-        Returns:
-            np.ndarray of shape (n_windows, n_features) or None
-        """
         try:
             end_time = datetime.utcnow()
             start_time = end_time - timedelta(days=self.lookback_days)
@@ -209,12 +176,6 @@ class WindowBuffer:
             return None
 
     def clear_cache(self, entity_id: Optional[str] = None):
-        """
-        Clear cache for a specific entity or all entities.
-
-        Args:
-            entity_id: Specific entity to clear, or None to clear all
-        """
         if entity_id is None:
             self._cache.clear()
         elif entity_id in self._cache:

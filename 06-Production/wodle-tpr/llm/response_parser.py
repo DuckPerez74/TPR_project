@@ -4,11 +4,6 @@ import logging
 
 
 class ResponseParser:
-    """
-    Parses LLM responses into structured format.
-    Handles JSON extraction and validation.
-    """
-
     DEFAULT_RESPONSE = {
         'classification': 'Unknown',
         'threat_type': 'None',
@@ -23,15 +18,6 @@ class ResponseParser:
         self.logger = logging.getLogger('wodle-tpr.llm.parser')
 
     def parse(self, llm_response: str) -> dict:
-        """
-        Parse LLM response text into structured dictionary.
-
-        Args:
-            llm_response: Raw text response from LLM
-
-        Returns:
-            Parsed and validated response dictionary
-        """
         if not llm_response:
             self.logger.warning("Empty LLM response received")
             return self.DEFAULT_RESPONSE.copy()
@@ -109,15 +95,6 @@ class ResponseParser:
         return response
 
     def format_for_log(self, parsed_response: dict) -> str:
-        """
-        Format parsed response for logging.
-
-        Args:
-            parsed_response: Validated response dictionary
-
-        Returns:
-            Formatted string for log output
-        """
         lines = [
             f"Classification: {parsed_response.get('classification', 'Unknown')}",
             f"Threat Type: {parsed_response.get('threat_type', 'None')}",

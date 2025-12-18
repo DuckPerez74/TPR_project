@@ -29,8 +29,6 @@ def parse_args():
 
 
 class GracefulShutdown:
-    """Handle graceful shutdown via SIGTERM/SIGINT signals."""
-
     def __init__(self):
         self.shutdown_requested = False
         signal.signal(signal.SIGTERM, self._handle_signal)
@@ -47,12 +45,6 @@ def process_entity(entity_id: str, entity_df, current_time: datetime,
                    scheduler, l1_calc, l2_calc, storage, detector, analyzer, logger,
                    detection_enabled: bool, shutdown_flag, llm_analyzer=None,
                    scheduling_minute: int = None):
-    """
-    Process entity using EntityProcessor class.
-
-    This function is now a thin wrapper around EntityProcessor.process()
-    for backward compatibility with the existing main loop.
-    """
     from core.entity_processor import EntityProcessor
 
     processor = EntityProcessor(

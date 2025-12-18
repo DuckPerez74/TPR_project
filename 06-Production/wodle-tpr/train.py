@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""
-TPR Model Training Entry Point
-
-This script provides a command-line interface for training TPR anomaly detection models.
-It supports flexible training options including per-layer and per-window selection.
-"""
-
 import sys
 import argparse
 from pathlib import Path
@@ -24,28 +17,28 @@ def main():
         description='TPR Model Training Pipeline',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
-Examples:
-  # Train everything (default)
-  python train.py
-
-  # Train only L1 models
-  python train.py --l1-only
-
-  # Train only L2 user models
-  python train.py --l2-user-only
-
-  # Train only L2 route models
-  python train.py --l2-route-only
-
-  # Train only cluster models
-  python train.py --cluster-only
-
-  # Train L1 and L2 users (skip routes and clusters)
-  python train.py --no-l2-route --no-cluster
-
-  # Train L2 only (both user and route)
-  python train.py --no-l1 --no-cluster
-        '''
+            Examples:
+              # Train everything (default)
+              python train.py
+            
+              # Train only L1 models
+              python train.py --l1-only
+            
+              # Train only L2 user models
+              python train.py --l2-user-only
+            
+              # Train only L2 route models
+              python train.py --l2-route-only
+            
+              # Train only cluster models
+              python train.py --cluster-only
+            
+              # Train L1 and L2 users (skip routes and clusters)
+              python train.py --no-l2-route --no-cluster
+            
+              # Train L2 only (both user and route)
+              python train.py --no-l1 --no-cluster
+                    '''
     )
 
     parser.add_argument('--l1-only', action='store_true',

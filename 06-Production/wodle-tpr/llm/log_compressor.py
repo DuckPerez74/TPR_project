@@ -5,11 +5,6 @@ from datetime import datetime
 
 
 class LogCompressor:
-    """
-    Compresses raw Wazuh logs into compact format for LLM analysis.
-    Extracts only essential fields to minimize token usage.
-    """
-
     def __init__(self):
         self.logger = logging.getLogger('wodle-tpr.llm.compressor')
 
@@ -31,15 +26,6 @@ class LogCompressor:
     }
 
     def compress_logs(self, df: pd.DataFrame) -> list:
-        """
-        Compress a DataFrame of raw logs into compact format.
-
-        Args:
-            df: DataFrame with raw Wazuh logs
-
-        Returns:
-            List of compressed log dictionaries
-        """
         compressed = []
 
         for _, row in df.iterrows():
@@ -119,15 +105,6 @@ class LogCompressor:
         return f"ip_{hash_hex}"
 
     def get_logs_summary(self, compressed_logs: list) -> dict:
-        """
-        Generate summary statistics from compressed logs.
-
-        Args:
-            compressed_logs: List of compressed log dictionaries
-
-        Returns:
-            Summary statistics dict
-        """
         if not compressed_logs:
             return {}
 

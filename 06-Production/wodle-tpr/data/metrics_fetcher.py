@@ -1,28 +1,9 @@
-"""
-Metrics Fetcher Module
-
-This module provides functions to fetch L1 and L2 metrics from OpenSearch
-for training purposes. Includes both entity-specific and bulk fetch operations.
-"""
-
 import sys
 import numpy as np
 from constants import L1_FEATURE_ORDER, L2_USER_FEATURES, L2_ROUTE_FEATURES
 
 
 def get_unique_entities(client, index_name, start_date=None, end_date=None):
-    """
-    Get list of unique entity IDs from the metrics index.
-
-    Args:
-        client: OpenSearch client
-        index_name: Index pattern (e.g., 'metrics-tpr*')
-        start_date: Optional start date filter
-        end_date: Optional end date filter
-
-    Returns:
-        List of entity IDs
-    """
     print(f"  Getting unique entities from {index_name}...")
 
     query = {
@@ -59,21 +40,6 @@ def get_unique_entities(client, index_name, start_date=None, end_date=None):
 
 
 def fetch_entity_l1_metrics_all_windows(client, index_name, entity_id, start_date, end_date, windows_list):
-    """
-    Fetch L1 metrics for a specific entity across MULTIPLE observation windows.
-    More efficient than fetching each window separately.
-
-    Args:
-        client: OpenSearch client
-        index_name: Index pattern
-        entity_id: Entity ID to fetch
-        start_date: Start datetime
-        end_date: End datetime
-        windows_list: List of window sizes in minutes (e.g., [60, 30, 10])
-
-    Returns:
-        Dict mapping window_minutes to numpy array of samples
-    """
     query = {
         "query": {
             "bool": {
@@ -136,20 +102,6 @@ def fetch_entity_l1_metrics_all_windows(client, index_name, entity_id, start_dat
 
 
 def fetch_entity_l1_metrics(client, index_name, entity_id, start_date, end_date, window_minutes=None):
-    """
-    Fetch L1 metrics for a specific entity.
-
-    Args:
-        client: OpenSearch client
-        index_name: Index pattern
-        entity_id: Entity ID to fetch
-        start_date: Start datetime
-        end_date: End datetime
-        window_minutes: Optional specific window (if None, fetches all windows)
-
-    Returns:
-        List of metric samples (numpy arrays)
-    """
     query = {
         "query": {
             "bool": {
@@ -208,22 +160,6 @@ def fetch_entity_l1_metrics(client, index_name, entity_id, start_date, end_date,
 
 
 def fetch_entity_l2_metrics_all(client, index_name, entity_id, start_date, end_date, dimensions_list, windows_list):
-    """
-    Fetch L2 metrics for a specific entity across ALL dimensions and windows.
-    More efficient than fetching each combination separately.
-
-    Args:
-        client: OpenSearch client
-        index_name: Index pattern
-        entity_id: Entity ID
-        start_date: Start datetime
-        end_date: End datetime
-        dimensions_list: List of dimensions (e.g., ['user', 'route'])
-        windows_list: List of window sizes in minutes (e.g., [60, 30, 10])
-
-    Returns:
-        Dict with structure: {dimension: {window: {dimension_value: samples_array}}}
-    """
     query = {
         "query": {
             "bool": {
@@ -305,21 +241,6 @@ def fetch_entity_l2_metrics_all(client, index_name, entity_id, start_date, end_d
 
 
 def fetch_entity_l2_metrics(client, index_name, entity_id, start_date, end_date, dimension, window_minutes=None):
-    """
-    Fetch L2 metrics for a specific entity and dimension.
-
-    Args:
-        client: OpenSearch client
-        index_name: Index pattern
-        entity_id: Entity ID
-        start_date: Start datetime
-        end_date: End datetime
-        dimension: 'user' or 'route'
-        window_minutes: Optional specific window
-
-    Returns:
-        Dict mapping dimension_value to list of samples
-    """
     query = {
         "query": {
             "bool": {
@@ -390,20 +311,6 @@ def fetch_entity_l2_metrics(client, index_name, entity_id, start_date, end_date,
 
 
 def fetch_all_l1_metrics_by_window(client, index_name, start_date, end_date, window_minutes):
-    """
-    Fetch L1 metrics for ALL entities at once for a specific window.
-    Much faster than fetching per entity (1 query vs N queries).
-
-    Args:
-        client: OpenSearch client
-        index_name: Index pattern
-        start_date: Start datetime
-        end_date: End datetime
-        window_minutes: Observation window size in minutes
-
-    Returns:
-        Dict mapping entity_id to numpy array of samples
-    """
     query = {
         "query": {
             "bool": {
@@ -472,21 +379,6 @@ def fetch_all_l1_metrics_by_window(client, index_name, start_date, end_date, win
 
 
 def fetch_cluster_l1_metrics(client, index_name, entity_ids, start_date, end_date, window_minutes):
-    """
-    Fetch L1 metrics for a SPECIFIC LIST of entities (e.g., entities in a cluster).
-    Optimized to fetch all entities in ONE query instead of N queries.
-
-    Args:
-        client: OpenSearch client
-        index_name: Index pattern
-        entity_ids: List of entity IDs to fetch (e.g., entities in cluster 0)
-        start_date: Start datetime
-        end_date: End datetime
-        window_minutes: Observation window size in minutes
-
-    Returns:
-        Numpy array of all samples from all entities (concatenated)
-    """
     if not entity_ids:
         return np.array([])
 
@@ -552,21 +444,6 @@ def fetch_cluster_l1_metrics(client, index_name, entity_ids, start_date, end_dat
 
 
 def fetch_all_l2_metrics_by_dimension_window(client, index_name, start_date, end_date, dimension, window_minutes):
-    """
-    Fetch L2 metrics for ALL entities at once for a specific dimension and window.
-    Much faster than fetching per entity (1 query vs N queries).
-
-    Args:
-        client: OpenSearch client
-        index_name: Index pattern
-        start_date: Start datetime
-        end_date: End datetime
-        dimension: 'user' or 'route'
-        window_minutes: Observation window size in minutes
-
-    Returns:
-        Dict with structure: {entity_id: {dimension_value: samples_array}}
-    """
     query = {
         "query": {
             "bool": {
@@ -644,19 +521,6 @@ def fetch_all_l2_metrics_by_dimension_window(client, index_name, start_date, end
 
 
 def fetch_l1_metrics_from_opensearch(client, index_name, window_minutes=60, min_samples=100, max_docs=1000000):
-    """
-    Fetch L1 metrics for a specific observation window (bulk fetch).
-
-    Args:
-        client: OpenSearch client
-        index_name: Index pattern
-        window_minutes: Observation window size in minutes
-        min_samples: Minimum samples required per entity
-        max_docs: Maximum documents to fetch
-
-    Returns:
-        Dict mapping entity_id to list of samples
-    """
     query = {
         "query": {
             "bool": {
@@ -743,20 +607,6 @@ def fetch_l1_metrics_from_opensearch(client, index_name, window_minutes=60, min_
 
 
 def fetch_l2_metrics_from_opensearch(client, index_name, dimension, window_minutes=60, min_samples=20, max_docs=1000000):
-    """
-    Fetch L2 metrics for a specific dimension (bulk fetch).
-
-    Args:
-        client: OpenSearch client
-        index_name: Index pattern
-        dimension: 'user' or 'route'
-        window_minutes: Observation window size in minutes
-        min_samples: Minimum samples required per dimension value
-        max_docs: Maximum documents to fetch
-
-    Returns:
-        Dict mapping dimension_value to list of samples
-    """
     query = {
         "query": {
             "bool": {

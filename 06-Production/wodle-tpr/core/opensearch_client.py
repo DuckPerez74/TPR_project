@@ -3,7 +3,6 @@ import threading
 from urllib.parse import urlparse
 import warnings
 
-# Suppress SSL/urllib3 warnings
 warnings.filterwarnings('ignore', message='.*Unverified HTTPS request.*')
 warnings.filterwarnings('ignore', message='.*SSL.*', category=Warning)
 

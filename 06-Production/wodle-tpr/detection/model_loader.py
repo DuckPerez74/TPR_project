@@ -58,20 +58,6 @@ class ModelLoader:
 
     def _load_autoencoder_model(self, model_path: Path, prefix: str, identifier,
                                  model_cache: dict, scaler_cache: dict, threshold_cache: dict = None) -> bool:
-        """
-        Generic AutoEncoder model loader (for entity and cluster models).
-
-        Args:
-            model_path: Path to model directory
-            prefix: Filename prefix (e.g., 'entity', 'cluster')
-            identifier: Model identifier (entity_id or cluster_id)
-            model_cache: Dictionary to store loaded model
-            scaler_cache: Dictionary to store loaded scaler
-            threshold_cache: Optional dictionary to store thresholds
-
-        Returns:
-            True if loading succeeded, False otherwise
-        """
         model_file = model_path / f"{prefix}_{identifier}.pt"
         if not model_file.exists():
             return False
@@ -121,19 +107,6 @@ class ModelLoader:
 
     def _load_isolation_forest_model(self, model_path: Path, prefix: str, identifier: str,
                                       model_cache: dict, scaler_cache: dict) -> bool:
-        """
-        Generic Isolation Forest model loader (for user and route models).
-
-        Args:
-            model_path: Path to model directory
-            prefix: Filename prefix (e.g., 'user')
-            identifier: Model identifier (user_id or route_id)
-            model_cache: Dictionary to store loaded model
-            scaler_cache: Dictionary to store loaded scaler
-
-        Returns:
-            True if loading succeeded, False otherwise
-        """
         # Handle empty prefix (for route models saved as entity_route)
         if prefix:
             model_file = model_path / f"{prefix}_{identifier}.joblib"
@@ -265,19 +238,6 @@ class ModelLoader:
 
 
     def predict_cluster(self, metrics_vector):
-        """
-        Predict cluster from a single metrics vector.
-
-        WARNING: This method uses a single observation window, which is inconsistent
-        with how the model was trained (using mean of multiple windows).
-        For better accuracy, consider using predict_cluster_from_windows() when possible.
-
-        Args:
-            metrics_vector: np.array of shape (1, n_features) or (n_features,)
-
-        Returns:
-            cluster_id: int or None
-        """
         if self.kmeans_clusterer is None:
             clusters = self.get_available_clusters()
             return clusters[0] if clusters else None
@@ -285,19 +245,6 @@ class ModelLoader:
         return self.kmeans_clusterer.predict(metrics_vector)
 
     def predict_cluster_from_windows(self, metrics_windows):
-        """
-        Predict cluster by aggregating multiple observation windows.
-
-        This method maintains consistency with training by aggregating windows
-        using mean before prediction. Use this method when you have access to
-        multiple observation windows for an entity.
-
-        Args:
-            metrics_windows: np.array of shape (n_windows, n_features)
-
-        Returns:
-            cluster_id: int or None
-        """
         if self.kmeans_clusterer is None:
             clusters = self.get_available_clusters()
             return clusters[0] if clusters else None
@@ -305,15 +252,6 @@ class ModelLoader:
         return self.kmeans_clusterer.predict_from_windows(metrics_windows)
 
     def predict_cluster_with_confidence(self, metrics_vector):
-        """
-        Predict cluster and return confidence metrics.
-
-        Args:
-            metrics_vector: np.array of shape (1, n_features) or (n_features,)
-
-        Returns:
-            dict with cluster prediction and confidence metrics, or None
-        """
         if self.kmeans_clusterer is None:
             return None
 

@@ -53,19 +53,6 @@ class KMeansClusterer:
         return int(cluster[0])
 
     def predict_from_windows(self, metrics_windows):
-        """
-        Predict cluster by aggregating multiple windows (consistent with training).
-
-        This method should be used during detection to maintain consistency with
-        how the model was trained (using mean aggregation across windows).
-
-        Args:
-            metrics_windows: np.array of shape (n_windows, n_features)
-                            Multiple observation windows for an entity
-
-        Returns:
-            cluster_id: int - The predicted cluster ID
-        """
         if self.kmeans is None:
             return None
 
@@ -76,20 +63,6 @@ class KMeansClusterer:
         return int(cluster[0])
 
     def predict_with_confidence(self, metrics_vector):
-        """
-        Predict cluster and return confidence metrics.
-
-        Args:
-            metrics_vector: np.array of shape (n_features,) or (1, n_features)
-
-        Returns:
-            dict with:
-                - cluster: int - Predicted cluster ID
-                - distances: list - Distances to all cluster centroids
-                - confidence: float - Margin between closest and second-closest cluster
-                - closest_distance: float - Distance to assigned cluster
-                - second_closest_distance: float - Distance to next closest cluster
-        """
         if self.kmeans is None:
             return None
 

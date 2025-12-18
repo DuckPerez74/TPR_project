@@ -1,31 +1,10 @@
-"""
-Behavioral metrics calculator - shared between User and IP dimensions.
-
-This module extracts behavioral metrics that are common to both user and IP
-analysis, avoiding code duplication and ensuring consistency.
-"""
 import pandas as pd
 from typing import Dict
 
 
 class BehavioralMetrics:
-    """
-    Calculates behavioral security metrics that are dimension-agnostic.
-
-    These metrics detect potentially malicious patterns like:
-    - Access to privileged/sensitive endpoints
-    - Configuration modifications
-    - Data exfiltration attempts
-    - Working hours violations
-    """
 
     def __init__(self, config: dict):
-        """
-        Initialize behavioral metrics calculator.
-
-        Args:
-            config: Configuration dictionary with L2 settings
-        """
         l2_config = config.get('metrics', {}).get('layers', {}).get('L2', {})
 
         # Load keywords from config (customizable per deployment)
@@ -46,15 +25,6 @@ class BehavioralMetrics:
         self.modification_methods = MODIFICATION_METHODS
 
     def calculate(self, df: pd.DataFrame) -> Dict[str, float]:
-        """
-        Calculate behavioral security metrics from DataFrame.
-
-        Args:
-            df: DataFrame with log entries (already filtered by dimension value)
-
-        Returns:
-            Dictionary with behavioral metrics
-        """
         total = len(df)
         if total == 0:
             return {}

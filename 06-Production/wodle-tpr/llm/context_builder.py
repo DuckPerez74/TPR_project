@@ -5,33 +5,12 @@ from .log_compressor import LogCompressor
 
 
 class ContextBuilder:
-    """
-    Builds the complete analysis context package for LLM analysis.
-    Combines alert metadata, anomaly details, metrics, and compressed logs.
-    """
-
     def __init__(self):
         self.log_compressor = LogCompressor()
 
     def build_context(self, entity_id: str, anomaly_result: dict,
                       metrics: dict, entity_df: pd.DataFrame,
                       window_minutes: int = 10) -> dict:
-        """
-        Build complete context for LLM analysis.
-
-        Args:
-            entity_id: Entity identifier
-            anomaly_result: Result from HierarchicalAnalyzer
-            metrics: Current metrics snapshot
-            entity_df: DataFrame with entity logs
-            window_minutes: Time window in minutes
-
-        Returns:
-            Complete context dictionary for LLM
-
-        Raises:
-            ValueError: If context data is insufficient or invalid
-        """
         # Validate inputs
         if entity_df is None or entity_df.empty:
             raise ValueError("entity_df is empty or None")
@@ -93,15 +72,6 @@ class ContextBuilder:
         return extracted
 
     def format_for_prompt(self, context: dict) -> str:
-        """
-        Format context as readable text for LLM prompt.
-
-        Args:
-            context: Context dictionary from build_context
-
-        Returns:
-            Formatted string for prompt injection
-        """
         lines = []
 
         alert = context.get('alert_context', {})

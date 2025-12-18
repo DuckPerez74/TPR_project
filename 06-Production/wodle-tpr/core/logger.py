@@ -8,20 +8,12 @@ from pathlib import Path
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 
-
-# Message header for Wazuh queue (same pattern as AWS wodle)
 MESSAGE_HEADER = "1:Wazuh-TPR:"
 WAZUH_QUEUE_PATH = "/var/ossec/queue/sockets/queue"
-MAX_EVENT_SIZE = 65535  # Maximum event size for Wazuh
+MAX_EVENT_SIZE = 65535
 
 
 class WazuhLogger:
-    """
-    Logger for TPR Anomaly Detection Wodle.
-
-    Sends events to Wazuh via socket (like AWS wodle) and maintains
-    local file logging for debugging/troubleshooting.
-    """
 
     def __init__(self, config: dict):
         log_config = config.get('logging', {})
@@ -80,19 +72,6 @@ class WazuhLogger:
             self.anomaly_logger.addHandler(logging.NullHandler())
 
     def send_to_wazuh(self, msg: dict) -> bool:
-        """
-        Send event directly to Wazuh queue via Unix socket.
-
-        This is the same mechanism used by the AWS wodle.
-        If enable_file_logging is true, also saves to anomaly.log.
-        Falls back to file logging if socket is unavailable (e.g., Windows testing).
-
-        Args:
-            msg: Dictionary with event data
-
-        Returns:
-            True if sent successfully, False otherwise
-        """
         json_msg = json.dumps(msg, default=str)
         socket_success = False
         
@@ -135,15 +114,6 @@ class WazuhLogger:
         return socket_success
 
     def log_anomaly_alert(self, entity_id: str, analysis_result: dict) -> str:
-        """
-        Log anomaly alert to Wazuh (via socket) and return alert_id for correlation.
-
-        Simplified format for SOC triaging:
-        - Quick overview: risk_score, severity, windows_affected
-        - What happened: triggers (L1, users, routes)
-        - Top impacts: max 5 items for quick investigation
-        - Drill-down: query to get full details from OpenSearch
-        """
         selected_window = analysis_result.get('selected_window')
         results = analysis_result.get('results', {})
         window_result = results[str(selected_window)]
@@ -235,12 +205,6 @@ class WazuhLogger:
         return alert_id
 
     def log_llm_analysis(self, entity_id: str, llm_result: dict, alert_id: str = None):
-        """
-        Log LLM analysis result to Wazuh (via socket).
-
-        Message format follows AWS wodle pattern - no rule/level info.
-        Alert levels are determined by Wazuh rules based on classification.
-        """
         # Build TPR LLM event (AWS wodle style - no rule/level)
         event = {
             'integration': 'tpr',
@@ -281,19 +245,6 @@ class WazuhLogger:
         }))
 
     def update_alert_with_llm(self, alert_id: str, llm_result: dict) -> bool:
-        """
-        Update existing alert document in OpenSearch with LLM analysis.
-
-        This is called after LLM analysis completes to add LLM fields to the
-        original alert document, keeping everything in one place.
-
-        Args:
-            alert_id: The alert_id used to find the document
-            llm_result: LLM analysis result dict
-
-        Returns:
-            True if update successful, False otherwise
-        """
         entity_id = llm_result.get('entity_id', 'unknown')
         self.logger.info(f"Updating alert {alert_id} with LLM result for entity {entity_id}")
         
@@ -301,7 +252,6 @@ class WazuhLogger:
             from core.opensearch_client import OpenSearchClient
             client = OpenSearchClient.get_instance()
 
-            # Search for the document by alert_id in wazuh-alerts indices
             search_body = {
                 "query": {
                     "bool": {
