@@ -261,8 +261,9 @@ class LLMAnalyzer:
             # Filter logs to only include the trigger window (10 minutes by default)
             # This ensures larger windows (30, 60 min) are not sent to the LLM
             if '@timestamp' in entity_df.columns:
-                # Use pd.Timestamp with UTC to match DataFrame's datetime64[ns, UTC] dtype
-                window_start = pd.Timestamp(start_time - timedelta(minutes=self.trigger_window), tz='UTC')
+                # start_time already has UTC timezone, so just convert to pd.Timestamp
+                # Don't use tz='UTC' when the input already has tzinfo
+                window_start = pd.Timestamp(start_time - timedelta(minutes=self.trigger_window))
                 filtered_df = entity_df[entity_df['@timestamp'] >= window_start].copy()
                 if filtered_df.empty:
                     self._log(f"No logs found in {self.trigger_window}min window for {entity_id}", 'warning')
