@@ -6,7 +6,6 @@ import multiprocessing as mp
 
 from core import OpenSearchClient
 from data.metrics_fetcher import get_unique_entities
-from detection import ModelAssignmentCache
 
 from training.cluster_trainer import train_kmeans_clustering, train_cluster_models
 from training.entity_trainer import process_entity_l1_training
@@ -91,6 +90,7 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
     print(f"{'='*60}")
 
     try:
+        from detection import ModelAssignmentCache
         cache_db_path = Path(__file__).parent.parent / 'model_assignments.db'
         cache = ModelAssignmentCache(db_path=str(cache_db_path))
         cache.clear_all()

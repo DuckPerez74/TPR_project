@@ -9,7 +9,6 @@ from data.metrics_fetcher import (
     fetch_cluster_l1_metrics
 )
 from training import KMeansClusterer, ModelTrainer
-from detection import ModelAssignmentCache
 
 
 def train_kmeans_clustering(config, client, metrics_index, warmup_start, warmup_end, models_base):
@@ -70,6 +69,7 @@ def train_kmeans_clustering(config, client, metrics_index, warmup_start, warmup_
     clusterer.save(kmeans_path)
     print(f"    Saved K-means to: {kmeans_path}")
 
+    from detection import ModelAssignmentCache
     cache_db_path = Path(__file__).parent.parent / 'model_assignments.db'
     cache = ModelAssignmentCache(db_path=str(cache_db_path))
 
