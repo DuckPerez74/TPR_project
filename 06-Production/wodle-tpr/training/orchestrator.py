@@ -9,16 +9,209 @@ import sys
 import numpy as np
 from pathlib import Path
 from datetime import timedelta
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from functools import partial
 
 from constants import L1_FEATURE_ORDER, L2_USER_FEATURES, L2_ROUTE_FEATURES
 from core import OpenSearchClient
 from data.metrics_fetcher import (
     get_unique_entities,
     fetch_entity_l1_metrics,
-    fetch_entity_l2_metrics
+    fetch_entity_l2_metrics,
+    fetch_all_l1_metrics_by_window,
+    fetch_all_l2_metrics_by_dimension_window
 )
 from training import KMeansClusterer, ModelTrainer, IsolationForestTrainer
 from detection import ModelAssignmentCache
+
+
+# Helper functions for parallel training
+
+def _get_optimal_workers(task_type='cpu'):
+    """
+    Determine optimal number of workers based on CPU count and instance type.
+
+    CRITICAL: Limited to max 2-3 workers to prevent memory exhaustion when training
+    thousands of models. Each worker duplicates data and models in RAM.
+
+    Args:
+        task_type: 'cpu' for CPU-bound (ProcessPoolExecutor), 'io' for I/O-bound (ThreadPoolExecutor)
+
+    Returns:
+        int: Recommended number of workers (max 2-3)
+    """
+    import multiprocessing
+
+    cpu_count = multiprocessing.cpu_count()
+
+    # HARD LIMIT: Max 2-3 workers to avoid memory exhaustion
+    # Each worker processes one entity at a time, which can be memory-intensive
+    max_workers = min(3, max(2, cpu_count // 16))  # Very conservative
+
+    print(f"    → Detected {cpu_count} CPUs")
+    print(f"    → Using CONSERVATIVE {max_workers} workers (memory-limited for training thousands of models)")
+
+    return max_workers
+
+
+def _train_single_entity_model(args):
+    """Helper for parallel entity model training. Returns (entity_id, model_data, window)."""
+    entity_id, samples, window, config = args
+
+    if len(samples) < 100:
+        return entity_id, None, window
+
+    trainer = ModelTrainer(
+        input_dim=len(L1_FEATURE_ORDER),
+        encoding_dim=12,
+        hidden_dim=30,
+        batch_size=256,
+        learning_rate=0.001,
+        epochs=100
+    )
+
+    model_data = trainer.train_entity_model(entity_id, samples)
+    return entity_id, model_data, window
+
+
+def _train_single_l2_model(args):
+    """Helper for parallel L2 model training. Returns (dim_value, model_data, dimension, window)."""
+    dim_value, samples, dimension, window = args
+
+    if len(samples) < 20:
+        return dim_value, None, dimension, window
+
+    trainer = IsolationForestTrainer(n_estimators=100, contamination='auto', random_state=42)
+    model_data = trainer.train_user_model(dim_value, samples)
+    return dim_value, model_data, dimension, window
+
+
+def _process_single_entity_all_windows(args):
+    """
+    Process a SINGLE entity: fetch data, train models for ALL windows and layers.
+    This is the core unit of work - one entity at a time to conserve memory.
+
+    Args:
+        args: Tuple of (entity_id, config, client, warmup_start, warmup_end,
+                       observation_windows, l2_dimensions, models_base,
+                       cluster_assignments, train_l1, train_cluster)
+
+    Returns:
+        Dict with results and cluster data samples
+    """
+    import gc
+    import warnings
+
+    # Suppress warnings in worker process
+    warnings.filterwarnings('ignore', category=UserWarning, module='torch.cuda')
+    warnings.filterwarnings('ignore', message='.*Unverified HTTPS request.*')
+    warnings.filterwarnings('ignore', message='.*SSL.*', category=Warning)
+
+    entity_id, config, metrics_index, warmup_start, warmup_end, observation_windows, \
+        l2_dimensions, models_base, cluster_assignments, train_l1, train_cluster = args
+
+    # Import inside worker to avoid pickling issues
+    from core import OpenSearchClient
+    client = OpenSearchClient.get_instance(config)
+
+    print(f"    [Entity {entity_id}] Starting processing (all windows: {observation_windows})")
+
+    results = {
+        'entity_id': entity_id,
+        'l1_models_trained': {},
+        'l2_models_trained': {dim: {} for dim in l2_dimensions},
+        'cluster_samples': {}  # Will accumulate samples for cluster training
+    }
+
+    for window in observation_windows:
+        results['l1_models_trained'][window] = 0
+        for dim in l2_dimensions:
+            results['l2_models_trained'][dim][window] = 0
+        results['cluster_samples'][window] = []
+
+        print(f"    [Entity {entity_id}] Window {window}min: Fetching L1 metrics...")
+
+        # ========== L1: Autoencoder ==========
+        if train_l1 or train_cluster:
+            samples = fetch_entity_l1_metrics(client, metrics_index, entity_id,
+                                             warmup_start, warmup_end, window)
+
+            print(f"    [Entity {entity_id}] Window {window}min: Got {len(samples)} L1 samples")
+
+            if train_l1 and len(samples) >= 100:
+                print(f"    [Entity {entity_id}] Window {window}min: Training L1 autoencoder...")
+                trainer = ModelTrainer(
+                    input_dim=len(L1_FEATURE_ORDER),
+                    encoding_dim=12,
+                    hidden_dim=30,
+                    batch_size=256,
+                    learning_rate=0.001,
+                    epochs=100
+                )
+                model_data = trainer.train_entity_model(entity_id, samples)
+
+                if model_data:
+                    entity_models_path = models_base / 'entity_models' / f'{window}min'
+                    trainer.save_model(model_data, entity_id, entity_models_path)
+                    results['l1_models_trained'][window] = 1
+                    print(f"    [Entity {entity_id}] Window {window}min: ✓ L1 autoencoder trained and saved")
+            elif train_l1:
+                print(f"    [Entity {entity_id}] Window {window}min: Skipping L1 (insufficient samples: {len(samples)}/100)")
+
+            # Accumulate for cluster training (save cluster_id + mean of samples)
+            if train_cluster and len(samples) > 0 and entity_id in cluster_assignments:
+                cluster_id = cluster_assignments[entity_id]
+                # Store only mean to save memory
+                results['cluster_samples'][window].append({
+                    'cluster_id': cluster_id,
+                    'samples': samples.copy()  # Keep samples for cluster training
+                })
+
+        # ========== L2: Isolation Forest - User ==========
+        if 'user' in l2_dimensions:
+            print(f"    [Entity {entity_id}] Window {window}min: Fetching L2 user metrics...")
+            user_metrics = fetch_entity_l2_metrics(client, metrics_index, entity_id,
+                                                  warmup_start, warmup_end, 'user', window)
+
+            if user_metrics:
+                print(f"    [Entity {entity_id}] Window {window}min: Training {len(user_metrics)} user models...")
+                trainer = IsolationForestTrainer(n_estimators=100, contamination='auto', random_state=42)
+                user_models_path = models_base / 'user_models' / f'{window}min'
+
+                for user_value, samples in user_metrics.items():
+                    if len(samples) >= 20:
+                        model_data = trainer.train_user_model(user_value, samples)
+                        if model_data:
+                            trainer.save_model(model_data, user_value, user_models_path)
+                            results['l2_models_trained']['user'][window] += 1
+
+                print(f"    [Entity {entity_id}] Window {window}min: ✓ {results['l2_models_trained']['user'][window]} user models trained")
+
+        # ========== L2: Isolation Forest - Route ==========
+        if 'route' in l2_dimensions:
+            print(f"    [Entity {entity_id}] Window {window}min: Fetching L2 route metrics...")
+            route_metrics = fetch_entity_l2_metrics(client, metrics_index, entity_id,
+                                                   warmup_start, warmup_end, 'route', window)
+
+            if route_metrics:
+                print(f"    [Entity {entity_id}] Window {window}min: Training {len(route_metrics)} route models...")
+                trainer = IsolationForestTrainer(n_estimators=100, contamination='auto', random_state=42)
+                route_models_path = models_base / 'route_models' / f'{window}min'
+
+                for route_value, samples in route_metrics.items():
+                    if len(samples) >= 20:
+                        model_data = trainer.train_user_model(route_value, samples)
+                        if model_data:
+                            trainer.save_model(model_data, route_value, route_models_path)
+                            results['l2_models_trained']['route'][window] += 1
+
+                print(f"    [Entity {entity_id}] Window {window}min: ✓ {results['l2_models_trained']['route'][window]} route models trained")
+
+    # Explicit memory cleanup
+    print(f"    [Entity {entity_id}] ✓ Completed all windows - clearing memory")
+    gc.collect()
+
+    return results
 
 
 def train_l1_models_for_window(config, client, metrics_index, window_minutes, warmup_start, warmup_end):
@@ -368,14 +561,18 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
         print(f"  Using first 7 days ({kmeans_start.date()} to {kmeans_end.date()}) for clustering")
 
         print(f"\n  [PHASE 1/3] Fetching L1 metrics for K-Means clustering...")
+        print(f"    → Using BATCH QUERY (1 query for all {len(entities)} entities)...")
+
+        # OPTIMIZATION: Fetch ALL entities at once (1 query instead of N queries)
+        all_entity_metrics = fetch_all_l1_metrics_by_window(
+            client, metrics_index, kmeans_start, kmeans_end, kmeans_window
+        )
+
+        print(f"    → Fetched data for {len(all_entity_metrics)} entities, computing means...")
+
         entity_mean_metrics = {}
-        for i, entity_id in enumerate(entities):
-            if (i + 1) % 50 == 0:
-                progress_pct = ((i + 1) / len(entities)) * 100
-                print(f"    → Fetching metrics for entity {i+1}/{len(entities)} ({progress_pct:.1f}%, {len(entity_mean_metrics)} qualified so far)")
-
-            samples = fetch_entity_l1_metrics(client, metrics_index, entity_id, kmeans_start, kmeans_end, kmeans_window)
-
+        for entity_id in entities:
+            samples = all_entity_metrics.get(entity_id, np.array([]))
             if len(samples) >= 20:
                 entity_mean_metrics[entity_id] = np.mean(samples, axis=0)
 
@@ -422,7 +619,7 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
         print("PHASE 2: Entity-by-Entity Training (L1 + L2, All Windows)")
         print(f"{'#'*60}")
 
-        print(f"  [PHASE 2/3] Fetching entities for L1 + L2 training...")
+        print(f"  [PHASE 2/3] Fetching entities list from OpenSearch...")
         all_entities = get_unique_entities(client, metrics_index, warmup_start, warmup_end)
 
         if not all_entities:
@@ -430,111 +627,101 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
             sys.exit(1)
 
         print(f"  ✓ Total entities to process: {len(all_entities)}")
-        print(f"  Note: Each entity will be trained for {len(observation_windows)} observation windows")
+        print(f"  ⚙  Processing ONE entity at a time (all windows + all layers per entity)")
+        print(f"  ⚙  Memory will be freed after each entity")
+        print(f"  ⚙  Using max {_get_optimal_workers()} parallel workers")
 
-    l1_trainer = None
-    l2_trainer = None
-
-    if train_l1 or train_cluster:
-        l1_trainer = ModelTrainer(
-            input_dim=len(L1_FEATURE_ORDER),
-            encoding_dim=12,
-            hidden_dim=30,
-            batch_size=256,
-            learning_rate=0.001,
-            epochs=100
-        )
-
-    if l2_dimensions:
-        l2_trainer = IsolationForestTrainer(n_estimators=100, contamination='auto', random_state=42)
-
+    # Initialize counters and cluster data accumulator
     cluster_data = {}
-    if train_cluster or train_l1:
+    if train_cluster:
         n_clusters = config.get('models', {}).get('n_clusters', 3)
         cluster_data = {window: {cid: [] for cid in range(n_clusters)} for window in observation_windows}
-
-    l2_accumulated_data = {}
-    for dim in l2_dimensions:
-        l2_accumulated_data[dim] = {}
-        for window in observation_windows:
-            l2_accumulated_data[dim][window] = {}
 
     l1_entity_models_trained = {window: 0 for window in observation_windows} if train_l1 else {}
     l2_models_trained = {dim: {window: 0 for window in observation_windows} for dim in l2_dimensions}
 
-    for entity_idx, entity_id in enumerate(all_entities):
-        progress_pct = ((entity_idx + 1) / len(all_entities)) * 100
-        
-        if (entity_idx + 1) % 10 == 0:
-            status_parts = []
-            if train_l1:
-                status_parts.append(f"L1: {sum(l1_entity_models_trained.values())} models")
-            if l2_dimensions:
-                for dim in l2_dimensions:
-                    total_dim = sum(l2_models_trained[dim].values())
-                    status_parts.append(f"L2-{dim}: {total_dim}")
-            print(f"\n  → Entity {entity_idx+1}/{len(all_entities)} ({progress_pct:.1f}%) | Trained: {' | '.join(status_parts)}")
-
-        # Fetch L1 metrics - ONE QUERY PER WINDOW (smaller, faster queries)
-        l1_metrics_by_window = {}
-        if train_l1 or train_cluster:
-            if (entity_idx + 1) % 50 == 0:
-                print(f"    ⟳ Fetching L1 metrics for entity {entity_id}...")
-            for window in observation_windows:
-                samples = fetch_entity_l1_metrics(client, metrics_index, entity_id, warmup_start, warmup_end, window)
-                l1_metrics_by_window[window] = samples
-
-        # Fetch L2 metrics - ONE QUERY PER DIMENSION (then separate by window/user on our side)
-        l2_metrics_all = {}
-        if l2_dimensions:
-            if (entity_idx + 1) % 50 == 0:
-                print(f"    ⟳ Fetching L2 metrics ({', '.join(l2_dimensions)}) for entity {entity_id}...")
-            for dim in l2_dimensions:
-                l2_metrics_all[dim] = {}
-                for window in observation_windows:
-                    # Fetch per dimension AND window for smaller queries
-                    dim_metrics = fetch_entity_l2_metrics(
-                        client, metrics_index, entity_id, warmup_start, warmup_end, dim, window
-                    )
-                    l2_metrics_all[dim][window] = dim_metrics
-
-        # Train L1 models
-        if train_l1:
-            for window in observation_windows:
-                samples = l1_metrics_by_window.get(window, np.array([]))
-
-                if len(samples) >= 100:
-                    if (entity_idx + 1) % 50 == 0:
-                        print(f"    ⚙ Training L1 entity model ({window}min window, {len(samples)} samples)...")
-                    model_data = l1_trainer.train_entity_model(entity_id, samples)
-
-                    if model_data:
-                        entity_models_path = models_base / 'entity_models' / f'{window}min'
-                        l1_trainer.save_model(model_data, entity_id, entity_models_path)
-                        l1_entity_models_trained[window] += 1
-
-                        cache.set_entity_model(entity_id, f"entity_{entity_id}")
-
-                if train_cluster and len(samples) > 0 and entity_id in cluster_assignments:
-                    cluster_id = cluster_assignments[entity_id]
-                    cluster_data[window][cluster_id].extend(samples.tolist())
-
-        # Accumulate L2 data for later training (PHASE 4)
-        for dim in l2_dimensions:
-            for window in observation_windows:
-                dim_metrics = l2_metrics_all.get(dim, {}).get(window, {})
-
-                for dim_value, samples in dim_metrics.items():
-                    if dim_value not in l2_accumulated_data[dim][window]:
-                        l2_accumulated_data[dim][window][dim_value] = []
-                    l2_accumulated_data[dim][window][dim_value].extend(samples.tolist())
-
+    # NEW APPROACH: Process ONE entity at a time (all windows + all layers)
     if all_entities:
-        print(f"\n  Entity processing complete!")
+        print(f"\n  [PHASE 2/3] Processing {len(all_entities)} entities (one at a time)...")
+
+        # Prepare arguments for parallel processing
+        entity_jobs = []
+        for entity_id in all_entities:
+            job_args = (
+                entity_id, config, metrics_index, warmup_start, warmup_end,
+                observation_windows, l2_dimensions, models_base,
+                cluster_assignments, train_l1, train_cluster
+            )
+            entity_jobs.append(job_args)
+
+        max_workers = _get_optimal_workers(task_type='cpu')
+
+        print(f"  ⚙  Using {max_workers} parallel workers to process entities")
+        print(f"  ⚙  Each worker processes one entity completely before moving to next")
+        print(f"")
+
+        # Process entities with limited parallelism
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_process_single_entity_all_windows, job): job[0] for job in entity_jobs}
+
+            completed = 0
+            total_l1_trained = 0
+            total_l2_user_trained = 0
+            total_l2_route_trained = 0
+
+            for future in as_completed(futures):
+                entity_id = futures[future]
+                result = future.result()
+
+                # Count models trained for this entity
+                entity_l1_count = sum(result['l1_models_trained'].values())
+                entity_l2_user_count = sum(result['l2_models_trained'].get('user', {}).values())
+                entity_l2_route_count = sum(result['l2_models_trained'].get('route', {}).values())
+
+                total_l1_trained += entity_l1_count
+                total_l2_user_trained += entity_l2_user_count
+                total_l2_route_trained += entity_l2_route_count
+
+                # Aggregate results
+                for window in observation_windows:
+                    l1_entity_models_trained[window] += result['l1_models_trained'].get(window, 0)
+                    for dim in l2_dimensions:
+                        l2_models_trained[dim][window] += result['l2_models_trained'][dim].get(window, 0)
+
+                    # Accumulate cluster samples (if any)
+                    if train_cluster and window in result['cluster_samples']:
+                        for sample_data in result['cluster_samples'][window]:
+                            cluster_id = sample_data['cluster_id']
+                            samples = sample_data['samples']
+                            cluster_data[window][cluster_id].extend(samples.tolist())
+
+                completed += 1
+                progress_pct = (completed / len(all_entities)) * 100
+
+                # Show detailed progress
+                models_summary = []
+                if entity_l1_count > 0:
+                    models_summary.append(f"L1:{entity_l1_count}")
+                if entity_l2_user_count > 0:
+                    models_summary.append(f"User:{entity_l2_user_count}")
+                if entity_l2_route_count > 0:
+                    models_summary.append(f"Route:{entity_l2_route_count}")
+
+                models_str = ", ".join(models_summary) if models_summary else "no models"
+
+                print(f"    → [{completed}/{len(all_entities)} = {progress_pct:.1f}%] Entity {entity_id}: {models_str} | Total so far: L1={total_l1_trained}, User={total_l2_user_trained}, Route={total_l2_route_trained}")
+
+        print(f"\n  ✓ Entity processing complete!")
         if train_l1:
-            print(f"  L1 Entity models trained: {l1_entity_models_trained}")
+            print(f"  ✓ L1 Entity models trained: {l1_entity_models_trained}")
         if l2_dimensions:
-            print(f"  L2 data accumulated for dimensions: {l2_dimensions}")
+            for dim in l2_dimensions:
+                print(f"  ✓ L2 {dim} models trained: {l2_models_trained[dim]}")
+
+        # Explicit memory cleanup after all entities processed
+        import gc
+        gc.collect()
+        print(f"  ✓ Memory freed after entity processing")
 
     cluster_models_trained = {window: 0 for window in observation_windows}
 
@@ -544,6 +731,15 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
         print(f"{'#'*60}")
 
         MIN_CLUSTER_SAMPLES = 100
+
+        l1_trainer = ModelTrainer(
+            input_dim=len(L1_FEATURE_ORDER),
+            encoding_dim=12,
+            hidden_dim=30,
+            batch_size=256,
+            learning_rate=0.001,
+            epochs=100
+        )
 
         for window in observation_windows:
             print(f"\n  [PHASE 3/3] Training cluster models for {window}min window...")
@@ -569,35 +765,6 @@ def train_all_models_unified(config, train_l1=True, train_l2_user=True, train_l2
     else:
         print(f"\n{'#'*60}")
         print("PHASE 3: Cluster Model Training - SKIPPED")
-        print(f"{'#'*60}")
-
-    if l2_dimensions:
-        print(f"\n{'#'*60}")
-        print("PHASE 4: L2 Dimension Model Training")
-        print(f"{'#'*60}")
-
-        for dim in l2_dimensions:
-            for window in observation_windows:
-                print(f"\n  [PHASE 4/4] Training L2 {dim} models for {window}min window...")
-
-                dimension_models_path = models_base / f'{dim}_models' / f'{window}min'
-
-                for dim_value, samples_list in l2_accumulated_data[dim][window].items():
-                    samples = np.array(samples_list)
-
-                    if len(samples) < 20:
-                        continue
-
-                    model_data = l2_trainer.train_user_model(dim_value, samples)
-
-                    if model_data:
-                        l2_trainer.save_model(model_data, dim_value, dimension_models_path)
-                        l2_models_trained[dim][window] += 1
-
-                print(f"    ✓ Trained {l2_models_trained[dim][window]} {dim} models for {window}min")
-    else:
-        print(f"\n{'#'*60}")
-        print("PHASE 4: L2 Dimension Model Training - SKIPPED")
         print(f"{'#'*60}")
 
     print("\n" + "=" * 60)

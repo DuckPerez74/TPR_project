@@ -1,6 +1,11 @@
 from opensearchpy import OpenSearch
 import threading
 from urllib.parse import urlparse
+import warnings
+
+# Suppress SSL/urllib3 warnings
+warnings.filterwarnings('ignore', message='.*Unverified HTTPS request.*')
+warnings.filterwarnings('ignore', message='.*SSL.*', category=Warning)
 
 
 class OpenSearchClient:
@@ -14,9 +19,8 @@ class OpenSearchClient:
         opensearch_config = config.get('opensearch', {})
         verify_certs = opensearch_config.get('verify_certs', True)
 
-        if not verify_certs:
-            import sys
-            print("WARNING: SSL certificate verification is disabled. This is insecure for production.", file=sys.stderr)
+        # SSL certificate verification warning suppressed
+        # User is aware of security implications when verify_certs=False
 
         # Parse host to extract base URL and path prefix
         host = opensearch_config['host']
@@ -30,7 +34,7 @@ class OpenSearchClient:
             'hosts': [base_host],
             'http_auth': (opensearch_config['username'], opensearch_config['password']),
             'verify_certs': verify_certs,
-            'ssl_show_warn': verify_certs,
+            'ssl_show_warn': False,  # Suppress SSL warnings
             'timeout': opensearch_config.get('timeout', 30),
             'max_retries': opensearch_config.get('max_retries', 3),
             'retry_on_timeout': True

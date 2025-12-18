@@ -62,26 +62,24 @@ class AnomalyDetector:
             return min(1.0, max(0.0, score))
         return min(1.0, max(0.0, (score - self.l2_norm_min) / range_size))
 
-    def detect(self, entity_id: str, metrics: dict, layer: str, **kwargs) -> tuple[bool, float, str, Optional[int], Optional[dict]]:
-        """Detect anomalies. Returns (is_anomaly, score, model_used, cluster_id, voting_details)."""
+    def detect(self, entity_id: str, metrics: dict, layer: str, **kwargs) -> tuple[bool, float, str, Optional[int]]:
+        """Detect anomalies. Returns (is_anomaly, score, model_used, cluster_id)."""
         dimension = kwargs.get('dimension')
         metrics_vector = self._metrics_to_vector(metrics, layer, dimension)
 
         if metrics_vector is None:
-            return False, 0.0, "invalid_metrics_vector", None, None
+            return False, 0.0, "invalid_metrics_vector", None
 
         if layer == 'L1':
             if self.model_loader.has_entity_model(entity_id):
-                result = self._detect_with_entity_model(entity_id, metrics_vector)
-                return result + (None,)  # Add None for voting_details
+                return self._detect_with_entity_model(entity_id, metrics_vector)
             else:
-                result = self._detect_with_cluster_model(entity_id, metrics_vector)
-                return result + (None,)  # Add None for voting_details
+                return self._detect_with_cluster_model(entity_id, metrics_vector)
         elif layer == 'L2':
             dimension_value = kwargs.get('dimension_value')
             return self._detect_l2_simple(entity_id, metrics_vector, metrics, dimension_value, dimension)
         else:
-            return False, 0.0, "unknown_layer", None, None
+            return False, 0.0, "unknown_layer", None
 
     def _detect_with_entity_model(self, entity_id: str, metrics_vector: np.ndarray) -> tuple:
         model = self.model_loader.get_entity_model(entity_id)
@@ -218,47 +216,39 @@ class AnomalyDetector:
 
     def _detect_l2_simple(self, entity_id: str, metrics_vector: np.ndarray,
                           metrics: dict, dimension_value: str = None, dimension: str = None) -> tuple:
-        # Handle route dimension - skip if no model exists
+        """Detect L2 anomalies (user or route dimension)."""
+        # Handle route dimension
         if dimension == 'route':
             if dimension_value is None:
-                return False, 0.0, "l2_route_no_value", None, None
+                return False, 0.0, "l2_route_no_value", None
 
-            # For routes, we only use route-specific models if they exist
-            # If no model exists for this route, skip L2 route detection
             route_model = self.model_loader.get_route_model(dimension_value)
             if route_model is None:
-                # Skip L2 route detection - no model available
-                return False, 0.0, "l2_route_no_model_skip", None, None
+                return False, 0.0, "l2_route_no_model", None
 
-            # Route has model, proceed with detection
             scaler = self.model_loader.get_route_scaler(dimension_value)
-            result = self._run_isolation_forest_detection(metrics_vector, route_model, scaler, f"route_{dimension_value}")
-            return result + (None,)  # Add None for voting_details
+            return self._run_isolation_forest_detection(metrics_vector, route_model, scaler, f"route_{dimension_value}")
 
         # Handle user dimension
         elif dimension == 'user':
             if dimension_value is None:
-                return False, 0.0, "l2_user_no_value", None, None
+                return False, 0.0, "l2_user_no_value", None
 
             user_id = dimension_value
             model = self.model_loader.get_user_model(user_id)
             scaler = self.model_loader.get_user_scaler(user_id)
 
-            # If user has own model, use it
             if model is not None and scaler is not None:
-                result = self._run_isolation_forest_detection(metrics_vector, model, scaler, f"user_{user_id}")
-                return result + (None,)  # Add None for voting_details
+                return self._run_isolation_forest_detection(metrics_vector, model, scaler, f"user_{user_id}")
 
-            # User has no model - skip L2 user detection
-            # This is faster and makes more sense than voting with similar users
-            # (new users don't have baseline, L1 detection still catches entity-level anomalies)
-            return False, 0.0, "l2_user_no_model_skip", None, None
+            # User has no model - skip (L1 still catches entity-level anomalies)
+            return False, 0.0, "l2_user_no_model", None
 
-        # Other dimensions or fallback
+        # Fallback for unknown dimensions
         else:
             error_rate = metrics_vector[0, 1] if metrics_vector.shape[1] > 1 else 0
             is_anomaly = error_rate > 50.0
-            return is_anomaly, float(error_rate), "l2_simple_fallback", None, None
+            return is_anomaly, float(error_rate), "l2_fallback", None
 
     def _run_isolation_forest_detection(self, metrics_vector: np.ndarray,
                                         model, scaler, identifier: str) -> tuple:

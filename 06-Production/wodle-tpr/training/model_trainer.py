@@ -1,3 +1,4 @@
+import warnings
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -8,6 +9,9 @@ from pathlib import Path
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from .autoencoder import AutoEncoder
+
+# Suppress PyTorch CUDA compatibility warnings (user is aware GPU may not be compatible)
+warnings.filterwarnings('ignore', category=UserWarning, module='torch.cuda')
 
 
 class ModelTrainer:

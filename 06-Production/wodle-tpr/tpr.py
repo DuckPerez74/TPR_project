@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 import sys
-import os
 import signal
-import threading
 import argparse
 from pathlib import Path
 from datetime import datetime, timezone
@@ -30,11 +28,9 @@ def parse_args():
     return parser.parse_args()
 
 
-class TimeoutError(Exception):
-    pass
-
-
 class GracefulShutdown:
+    """Handle graceful shutdown via SIGTERM/SIGINT signals."""
+
     def __init__(self):
         self.shutdown_requested = False
         signal.signal(signal.SIGTERM, self._handle_signal)
@@ -45,33 +41,6 @@ class GracefulShutdown:
 
     def should_continue(self):
         return not self.shutdown_requested
-
-
-def timeout_handler(timeout_seconds, shutdown_flag):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            result = [TimeoutError("Execution timeout")]
-
-            def target():
-                try:
-                    result[0] = func(*args, **kwargs)
-                except Exception as e:
-                    result[0] = e
-
-            thread = threading.Thread(target=target)
-            thread.daemon = True
-            thread.start()
-            thread.join(timeout_seconds)
-
-            if thread.is_alive() or shutdown_flag.shutdown_requested:
-                raise TimeoutError(f"Execution exceeded {timeout_seconds}s timeout")
-
-            if isinstance(result[0], Exception):
-                raise result[0]
-
-            return result[0]
-        return wrapper
-    return decorator
 
 
 def process_entity(entity_id: str, entity_df, current_time: datetime,

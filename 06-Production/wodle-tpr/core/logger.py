@@ -138,123 +138,92 @@ class WazuhLogger:
         """
         Log anomaly alert to Wazuh (via socket) and return alert_id for correlation.
 
-        Message format follows AWS wodle pattern - no rule/level info.
-        Alert levels are determined by Wazuh rules (0450-tpr_rules.xml).
+        Simplified format for SOC triaging:
+        - Quick overview: risk_score, severity, windows_affected
+        - What happened: triggers (L1, users, routes)
+        - Top impacts: max 5 items for quick investigation
+        - Drill-down: query to get full details from OpenSearch
         """
         selected_window = analysis_result.get('selected_window')
-        window_result = analysis_result['results'][str(selected_window)]
-
-        layer = window_result['anomaly_layer']
-        score = window_result['score']
+        results = analysis_result.get('results', {})
+        window_result = results[str(selected_window)]
         alert_id = str(uuid.uuid4())
-
-        # Build TPR event (AWS wodle style - no rule/level)
+        
+        # Calculate risk score (as percentage)
+        risk_score = round(analysis_result.get('risk_score', 0.0) * 100)
+        
+        # Determine severity based on risk_score
+        if risk_score >= 60:
+            severity = 'critical'
+        elif risk_score >= 40:
+            severity = 'high'
+        elif risk_score >= 20:
+            severity = 'medium'
+        else:
+            severity = 'low'
+        
+        # Find which windows had anomalies
+        windows_affected = []
+        for win in ['10', '30', '60']:
+            if results.get(win, {}).get('has_anomaly', False):
+                windows_affected.append(int(win))
+        
+        # Count L2 users and routes from selected window
+        l2_details = window_result.get('l2_details', [])
+        l2_users_count = sum(1 for d in l2_details if d.get('dimension') == 'user')
+        l2_routes_count = sum(1 for d in l2_details if d.get('dimension') == 'route')
+        
+        # Build triggers summary
+        triggers = {
+            'l1': window_result.get('l1_anomaly', False),
+            'l2_users': l2_users_count,
+            'l2_routes': l2_routes_count
+        }
+        
+        # Build top impacts (max 5, sorted by score)
+        top_impacts = []
+        if l2_details:
+            sorted_details = sorted(l2_details, key=lambda x: x.get('score', 0), reverse=True)
+            for detail in sorted_details[:5]:
+                top_impacts.append({
+                    'type': detail.get('dimension', 'unknown'),
+                    'value': str(detail.get('dimension_value', '')),
+                    'score': round(detail.get('score', 0) * 100)  # as percentage
+                })
+        
+        # Build drill-down query
+        timestamp = analysis_result.get('timestamp', datetime.utcnow().isoformat())
+        details_query = f"entity_id:{entity_id} AND @timestamp:[now-{selected_window}m TO now]"
+        
+        # Build simplified TPR event
         event = {
             'integration': 'tpr',
             'tpr': {
                 'event_type': 'anomaly',
                 'alert_id': alert_id,
                 'entity_id': str(entity_id),
-                'layer': layer,
-                'anomaly_score': round(score, 6),
-                'observation_window_minutes': selected_window
+                
+                # Quick triaging
+                'risk_score': risk_score,
+                'severity': severity,
+                'windows_affected': windows_affected,
+                'selected_window': selected_window,
+                
+                # What happened
+                'triggers': triggers,
+                
+                # Top impacted (for quick investigation)
+                'top_impacts': top_impacts if top_impacts else None,
+                
+                # Drill-down reference
+                'details_query': details_query
             }
         }
         
-        # Only add model_used if it has an actual value
-        # Note: model_used is now always a string (never None) thanks to detector fixes
+        # Add model info if available
         model_used = window_result.get('model_used')
         if model_used:
             event['tpr']['model_used'] = model_used
-        
-        cluster_id = window_result.get('cluster_id')
-        if cluster_id is not None:
-            event['tpr']['cluster_id'] = cluster_id
-
-        # Add risk scoring data if available (as percentage 0-100%)
-        if 'risk_score' in analysis_result:
-            event['tpr']['risk_score'] = round(analysis_result['risk_score'] * 100)
-
-            # Add risk components breakdown (as percentages, rounded)
-            if 'risk_components' in analysis_result:
-                components = analysis_result['risk_components']
-                event['tpr']['risk_l1'] = round(components.get('l1_weighted', 0.0) * 100)
-                event['tpr']['risk_l2_user'] = round(components.get('l2_user_weighted', 0.0) * 100)
-                event['tpr']['risk_l2_route'] = round(components.get('l2_route_weighted', 0.0) * 100)
-
-        # Add L2-specific fields
-        if layer == 'L2':
-            # Keep backward compatibility fields (deprecated but maintained for existing queries)
-            event['tpr']['l2_dimension'] = window_result.get('l2_dimension')
-            event['tpr']['l2_dimension_value'] = str(window_result.get('l2_dimension_value', ''))
-
-            # Get risk weights for calculating individual contributions
-            risk_components = analysis_result.get('risk_components', {})
-            
-            # Include L2 anomaly details as structured JSON array with risk contributions
-            l2_details = window_result.get('l2_details', [])
-            if l2_details:
-                # Calculate individual risk contributions for each dimension
-                enriched_anomalies = []
-                users_count = 0
-                routes_count = 0
-                
-                for detail in l2_details:
-                    dimension = detail.get('dimension', 'unknown')
-                    score = detail.get('score', 0.0)
-                    
-                    # Calculate risk contribution based on dimension type
-                    # risk_contribution = score × weight × 100 (as percentage)
-                    if dimension == 'user':
-                        weight = 0.5  # Default from config, should match risk_weights.l2_user
-                        users_count += 1
-                    elif dimension == 'route':
-                        weight = 0.2  # Default from config, should match risk_weights.l2_route
-                        routes_count += 1
-                    else:
-                        weight = 0.0
-                    
-                    risk_contribution_pct = round(score * weight * 100, 2)
-                    
-                    enriched_anomalies.append({
-                        'dimension': dimension,
-                        'value': str(detail.get('dimension_value', '')),
-                        'score': round(score, 4),
-                        'risk_contribution_pct': risk_contribution_pct
-                    })
-                
-                # Sort by risk contribution (highest first) for easier investigation
-                enriched_anomalies.sort(key=lambda x: x['risk_contribution_pct'], reverse=True)
-                
-                # Include top 20 anomalies (increased from 5 to show more context)
-                event['tpr']['l2_anomalies'] = enriched_anomalies[:20]
-                event['tpr']['l2_anomalies_count'] = len(l2_details)
-                
-                # Add summary for quick filtering and investigation
-                event['tpr']['l2_summary'] = {
-                    'total_anomalous_users': users_count,
-                    'total_anomalous_routes': routes_count,
-                    'top_dimension': enriched_anomalies[0]['dimension'] if enriched_anomalies else None,
-                    'top_dimension_value': enriched_anomalies[0]['value'] if enriched_anomalies else None,
-                    'top_risk_contribution_pct': enriched_anomalies[0]['risk_contribution_pct'] if enriched_anomalies else 0
-                }
-
-
-            # Add voting details if voting mechanism was used
-            voting_details = window_result.get('voting_details')
-            if voting_details:
-                event['tpr']['voting_used'] = True
-                event['tpr']['voting_voters_count'] = len(voting_details.get('voters', []))
-                
-                # Include voter IDs (limit to 10 to avoid oversized events)
-                voters = voting_details.get('voters', [])
-                if voters:
-                    event['tpr']['voting_voters'] = [str(v) for v in voters[:10]]
-                
-                # Include normalized scores (limit to 10)
-                norm_scores = voting_details.get('normalized_scores', [])
-                if norm_scores:
-                    event['tpr']['voting_scores'] = [round(s, 4) for s in norm_scores[:10]]
 
         # Send to Wazuh via socket
         self.send_to_wazuh(event)
@@ -265,9 +234,9 @@ class WazuhLogger:
             'event_type': 'anomaly_alert_sent',
             'alert_id': alert_id,
             'entity_id': entity_id,
-            'layer': layer,
-            'window': selected_window,
-            'score': round(score, 6)
+            'risk_score': risk_score,
+            'severity': severity,
+            'windows_affected': windows_affected
         }))
 
         return alert_id

@@ -389,6 +389,180 @@ def fetch_entity_l2_metrics(client, index_name, entity_id, start_date, end_date,
         return {}
 
 
+def fetch_all_l1_metrics_by_window(client, index_name, start_date, end_date, window_minutes):
+    """
+    Fetch L1 metrics for ALL entities at once for a specific window.
+    Much faster than fetching per entity (1 query vs N queries).
+
+    Args:
+        client: OpenSearch client
+        index_name: Index pattern
+        start_date: Start datetime
+        end_date: End datetime
+        window_minutes: Observation window size in minutes
+
+    Returns:
+        Dict mapping entity_id to numpy array of samples
+    """
+    query = {
+        "query": {
+            "bool": {
+                "must": [
+                    {"term": {"layer.keyword": "L1"}},
+                    {"term": {"observation_window": window_minutes}},
+                    {
+                        "range": {
+                            "@timestamp": {
+                                "gte": start_date.isoformat(),
+                                "lt": end_date.isoformat()
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        "size": 10000,
+        "sort": [{"@timestamp": "asc"}]
+    }
+
+    try:
+        all_docs = []
+        response = client.search(index=index_name, body=query, scroll='2m', ignore_unavailable=True)
+        scroll_id = response.get('_scroll_id')
+        hits = response['hits']['hits']
+        all_docs.extend(hits)
+
+        # Fetch ALL documents
+        while hits:
+            response = client.scroll(scroll_id=scroll_id, scroll='2m')
+            hits = response['hits']['hits']
+            all_docs.extend(hits)
+            scroll_id = response.get('_scroll_id')
+
+        if scroll_id:
+            try:
+                client.clear_scroll(scroll_id=scroll_id)
+            except:
+                pass
+
+        # Group by entity
+        entity_metrics = {}
+        for doc in all_docs:
+            source = doc['_source']
+            entity_id = source.get('entity_id')
+            if not entity_id:
+                continue
+
+            metrics = source.get('metrics', {})
+            sample = [metrics.get(feat, 0) for feat in L1_FEATURE_ORDER]
+
+            if entity_id not in entity_metrics:
+                entity_metrics[entity_id] = []
+            entity_metrics[entity_id].append(sample)
+
+        # Convert to numpy arrays
+        for entity_id in entity_metrics:
+            entity_metrics[entity_id] = np.array(entity_metrics[entity_id])
+
+        return entity_metrics
+
+    except Exception as e:
+        print(f"    ERROR: Failed to fetch L1 batch for window {window_minutes}: {str(e)}")
+        return {}
+
+
+def fetch_all_l2_metrics_by_dimension_window(client, index_name, start_date, end_date, dimension, window_minutes):
+    """
+    Fetch L2 metrics for ALL entities at once for a specific dimension and window.
+    Much faster than fetching per entity (1 query vs N queries).
+
+    Args:
+        client: OpenSearch client
+        index_name: Index pattern
+        start_date: Start datetime
+        end_date: End datetime
+        dimension: 'user' or 'route'
+        window_minutes: Observation window size in minutes
+
+    Returns:
+        Dict with structure: {entity_id: {dimension_value: samples_array}}
+    """
+    query = {
+        "query": {
+            "bool": {
+                "must": [
+                    {"term": {"layer.keyword": "L2"}},
+                    {"term": {"dimension.keyword": dimension}},
+                    {"term": {"observation_window": window_minutes}},
+                    {
+                        "range": {
+                            "@timestamp": {
+                                "gte": start_date.isoformat(),
+                                "lt": end_date.isoformat()
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        "size": 10000,
+        "sort": [{"@timestamp": "asc"}]
+    }
+
+    try:
+        all_docs = []
+        response = client.search(index=index_name, body=query, scroll='2m', ignore_unavailable=True)
+        scroll_id = response.get('_scroll_id')
+        hits = response['hits']['hits']
+        all_docs.extend(hits)
+
+        # Fetch ALL documents
+        while hits:
+            response = client.scroll(scroll_id=scroll_id, scroll='2m')
+            hits = response['hits']['hits']
+            all_docs.extend(hits)
+            scroll_id = response.get('_scroll_id')
+
+        if scroll_id:
+            try:
+                client.clear_scroll(scroll_id=scroll_id)
+            except:
+                pass
+
+        feature_order = L2_USER_FEATURES if dimension == 'user' else L2_ROUTE_FEATURES
+
+        # Group by entity and dimension_value
+        entity_data = {}
+        for doc in all_docs:
+            source = doc['_source']
+            entity_id = source.get('entity_id')
+            dim_value = source.get('dimension_value')
+
+            if not entity_id or not dim_value:
+                continue
+
+            metrics = source.get('metrics', {})
+            sample = [metrics.get(feat, 0) for feat in feature_order]
+
+            if entity_id not in entity_data:
+                entity_data[entity_id] = {}
+            if dim_value not in entity_data[entity_id]:
+                entity_data[entity_id][dim_value] = []
+
+            entity_data[entity_id][dim_value].append(sample)
+
+        # Convert to numpy arrays
+        for entity_id in entity_data:
+            for dim_value in entity_data[entity_id]:
+                entity_data[entity_id][dim_value] = np.array(entity_data[entity_id][dim_value])
+
+        return entity_data
+
+    except Exception as e:
+        print(f"    ERROR: Failed to fetch L2 batch for {dimension} window {window_minutes}: {str(e)}")
+        return {}
+
+
 def fetch_l1_metrics_from_opensearch(client, index_name, window_minutes=60, min_samples=100, max_docs=1000000):
     """
     Fetch L1 metrics for a specific observation window (bulk fetch).
