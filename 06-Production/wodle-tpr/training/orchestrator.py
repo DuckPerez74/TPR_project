@@ -31,25 +31,25 @@ def _get_optimal_workers(task_type='cpu'):
     """
     Determine optimal number of workers based on CPU count and instance type.
 
-    CRITICAL: Limited to max 2-3 workers to prevent memory exhaustion when training
+    CRITICAL: Limited to max 4 workers to prevent memory exhaustion when training
     thousands of models. Each worker duplicates data and models in RAM.
 
     Args:
         task_type: 'cpu' for CPU-bound (ProcessPoolExecutor), 'io' for I/O-bound (ThreadPoolExecutor)
 
     Returns:
-        int: Recommended number of workers (max 2-3)
+        int: Recommended number of workers (max 4)
     """
     import multiprocessing
 
     cpu_count = multiprocessing.cpu_count()
 
-    # HARD LIMIT: Max 2-3 workers to avoid memory exhaustion
+    # HARD LIMIT: Max 4 workers to balance speed and memory usage
     # Each worker processes one entity at a time, which can be memory-intensive
-    max_workers = min(3, max(2, cpu_count // 16))  # Very conservative
+    max_workers = 4
 
     print(f"    → Detected {cpu_count} CPUs")
-    print(f"    → Using CONSERVATIVE {max_workers} workers (memory-limited for training thousands of models)")
+    print(f"    → Using {max_workers} parallel workers (memory-optimized for training thousands of models)")
 
     return max_workers
 
@@ -101,6 +101,8 @@ def _process_single_entity_all_windows(args):
     """
     import gc
     import warnings
+    import time
+    from datetime import datetime
 
     # Suppress warnings in worker process
     warnings.filterwarnings('ignore', category=UserWarning, module='torch.cuda')
@@ -114,7 +116,22 @@ def _process_single_entity_all_windows(args):
     from core import OpenSearchClient
     client = OpenSearchClient.get_instance(config)
 
-    print(f"    [Entity {entity_id}] Starting processing (all windows: {observation_windows})")
+    def _timestamp():
+        """Get current timestamp for logging"""
+        return datetime.now().strftime("%H:%M:%S")
+
+    def _duration(start_time):
+        """Calculate duration in human-readable format"""
+        elapsed = time.time() - start_time
+        if elapsed < 60:
+            return f"{elapsed:.1f}s"
+        elif elapsed < 3600:
+            return f"{elapsed/60:.1f}min"
+        else:
+            return f"{elapsed/3600:.1f}h"
+
+    entity_start = time.time()
+    print(f"    [{_timestamp()}] [Entity {entity_id}] Starting processing (all windows: {observation_windows})")
 
     results = {
         'entity_id': entity_id,
@@ -129,17 +146,20 @@ def _process_single_entity_all_windows(args):
             results['l2_models_trained'][dim][window] = 0
         results['cluster_samples'][window] = []
 
-        print(f"    [Entity {entity_id}] Window {window}min: Fetching L1 metrics...")
+        # L1 Fetch
+        t0 = time.time()
+        print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min: Fetching L1 metrics...")
 
         # ========== L1: Autoencoder ==========
         if train_l1 or train_cluster:
             samples = fetch_entity_l1_metrics(client, metrics_index, entity_id,
                                              warmup_start, warmup_end, window)
 
-            print(f"    [Entity {entity_id}] Window {window}min: Got {len(samples)} L1 samples")
+            print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min: Got {len(samples)} L1 samples (fetch: {_duration(t0)})")
 
             if train_l1 and len(samples) >= 100:
-                print(f"    [Entity {entity_id}] Window {window}min: Training L1 autoencoder...")
+                t1 = time.time()
+                print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min: Training L1 autoencoder...")
                 trainer = ModelTrainer(
                     input_dim=len(L1_FEATURE_ORDER),
                     encoding_dim=12,
@@ -154,9 +174,9 @@ def _process_single_entity_all_windows(args):
                     entity_models_path = models_base / 'entity_models' / f'{window}min'
                     trainer.save_model(model_data, entity_id, entity_models_path)
                     results['l1_models_trained'][window] = 1
-                    print(f"    [Entity {entity_id}] Window {window}min: ✓ L1 autoencoder trained and saved")
+                    print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min: ✓ L1 autoencoder trained in {_duration(t1)}")
             elif train_l1:
-                print(f"    [Entity {entity_id}] Window {window}min: Skipping L1 (insufficient samples: {len(samples)}/100)")
+                print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min: Skipping L1 (insufficient samples: {len(samples)}/100)")
 
             # Accumulate for cluster training (save cluster_id + mean of samples)
             if train_cluster and len(samples) > 0 and entity_id in cluster_assignments:
@@ -169,46 +189,71 @@ def _process_single_entity_all_windows(args):
 
         # ========== L2: Isolation Forest - User ==========
         if 'user' in l2_dimensions:
-            print(f"    [Entity {entity_id}] Window {window}min: Fetching L2 user metrics...")
+            t2 = time.time()
+            print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min: Fetching L2 user metrics...")
             user_metrics = fetch_entity_l2_metrics(client, metrics_index, entity_id,
                                                   warmup_start, warmup_end, 'user', window)
 
             if user_metrics:
-                print(f"    [Entity {entity_id}] Window {window}min: Training {len(user_metrics)} user models...")
+                print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min: Training {len(user_metrics)} user models (fetch: {_duration(t2)})...")
+                t3 = time.time()
                 trainer = IsolationForestTrainer(n_estimators=100, contamination='auto', random_state=42)
                 user_models_path = models_base / 'user_models' / f'{window}min'
 
-                for user_value, samples in user_metrics.items():
+                total_users = len(user_metrics)
+                trained_count = 0
+                for idx, (user_value, samples) in enumerate(user_metrics.items(), 1):
                     if len(samples) >= 20:
                         model_data = trainer.train_user_model(user_value, samples)
                         if model_data:
                             trainer.save_model(model_data, user_value, user_models_path)
                             results['l2_models_trained']['user'][window] += 1
+                            trained_count += 1
 
-                print(f"    [Entity {entity_id}] Window {window}min: ✓ {results['l2_models_trained']['user'][window]} user models trained")
+                    # Show progress every 100 models or at milestones
+                    if total_users > 200 and (idx % 100 == 0 or idx == total_users):
+                        progress_pct = (idx / total_users) * 100
+                        print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min:   -> User models: {idx}/{total_users} ({progress_pct:.0f}%, {trained_count} trained)")
+
+                print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min: ✓ {results['l2_models_trained']['user'][window]} user models trained in {_duration(t3)}")
 
         # ========== L2: Isolation Forest - Route ==========
         if 'route' in l2_dimensions:
-            print(f"    [Entity {entity_id}] Window {window}min: Fetching L2 route metrics...")
+            t4 = time.time()
+            print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min: Fetching L2 route metrics...")
             route_metrics = fetch_entity_l2_metrics(client, metrics_index, entity_id,
                                                    warmup_start, warmup_end, 'route', window)
 
             if route_metrics:
-                print(f"    [Entity {entity_id}] Window {window}min: Training {len(route_metrics)} route models...")
+                print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min: Training {len(route_metrics)} route models (fetch: {_duration(t4)})...")
+                t5 = time.time()
                 trainer = IsolationForestTrainer(n_estimators=100, contamination='auto', random_state=42)
                 route_models_path = models_base / 'route_models' / f'{window}min'
 
-                for route_value, samples in route_metrics.items():
+                total_routes = len(route_metrics)
+                trained_count = 0
+                for idx, (route_value, samples) in enumerate(route_metrics.items(), 1):
                     if len(samples) >= 20:
                         model_data = trainer.train_user_model(route_value, samples)
                         if model_data:
                             trainer.save_model(model_data, route_value, route_models_path)
                             results['l2_models_trained']['route'][window] += 1
+                            trained_count += 1
 
-                print(f"    [Entity {entity_id}] Window {window}min: ✓ {results['l2_models_trained']['route'][window]} route models trained")
+                    # Show progress every 100 models or at milestones
+                    if total_routes > 200 and (idx % 100 == 0 or idx == total_routes):
+                        progress_pct = (idx / total_routes) * 100
+                        print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min:   -> Route models: {idx}/{total_routes} ({progress_pct:.0f}%, {trained_count} trained)")
+
+                print(f"    [{_timestamp()}] [Entity {entity_id}] Window {window}min: ✓ {results['l2_models_trained']['route'][window]} route models trained in {_duration(t5)}")
 
     # Explicit memory cleanup
-    print(f"    [Entity {entity_id}] ✓ Completed all windows - clearing memory")
+    total_time = _duration(entity_start)
+    total_l1 = sum(results['l1_models_trained'].values())
+    total_user = sum(results['l2_models_trained'].get('user', {}).values())
+    total_route = sum(results['l2_models_trained'].get('route', {}).values())
+
+    print(f"    [{_timestamp()}] [Entity {entity_id}] ✓ Completed all windows in {total_time} (L1:{total_l1}, User:{total_user}, Route:{total_route}) - clearing memory")
     gc.collect()
 
     return results

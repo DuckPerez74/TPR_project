@@ -241,8 +241,9 @@ class AnomalyDetector:
             if model is not None and scaler is not None:
                 return self._run_isolation_forest_detection(metrics_vector, model, scaler, f"user_{user_id}")
 
-            # User has no model - skip (L1 still catches entity-level anomalies)
-            return False, 0.0, "l2_user_no_model", None
+            # User has no model - apply penalty score (unknown users = higher risk)
+            # Returns is_anomaly=False but with score=0.3 to influence composite risk
+            return False, 0.3, "l2_user_no_model", None
 
         # Fallback for unknown dimensions
         else:

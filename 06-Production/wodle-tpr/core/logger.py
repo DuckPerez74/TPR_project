@@ -191,10 +191,6 @@ class WazuhLogger:
                     'score': round(detail.get('score', 0) * 100)  # as percentage
                 })
         
-        # Build drill-down query
-        timestamp = analysis_result.get('timestamp', datetime.utcnow().isoformat())
-        details_query = f"entity_id:{entity_id} AND @timestamp:[now-{selected_window}m TO now]"
-        
         # Build simplified TPR event
         event = {
             'integration': 'tpr',
@@ -213,10 +209,7 @@ class WazuhLogger:
                 'triggers': triggers,
                 
                 # Top impacted (for quick investigation)
-                'top_impacts': top_impacts if top_impacts else None,
-                
-                # Drill-down reference
-                'details_query': details_query
+                'top_impacts': top_impacts if top_impacts else None
             }
         }
         
